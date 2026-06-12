@@ -1,5 +1,5 @@
 {
-  "name": "gemini-telegram-worker",
+  "name": "tg-bot",
   "main": "src/index.js",
   "compatibility_date": "2026-06-01",
   "vars": {
