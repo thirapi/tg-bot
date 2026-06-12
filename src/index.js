@@ -1,3 +1,6 @@
+const KV_TTL = 1800;
+const MAX_HISTORY = 10;
+
 export default {
   async fetch(request, env, ctx) {
     if (request.method !== "POST") {
@@ -12,10 +15,10 @@ export default {
         return new Response("OK", { status: 200 });
       }
 
-      const chatId = message.chat.id;
+      const chatId = String(message.chat.id);
       const userText = message.text;
 
-      if (String(chatId) !== String(env.ALLOWED_USER_ID)) {
+      if (chatId !== String(env.ALLOWED_USER_ID)) {
         console.warn(`Akses tidak dikenal ditolak untuk Chat ID: ${chatId}`);
         await sendTelegramMessage(
           env.TELEGRAM_BOT_TOKEN,
@@ -30,6 +33,19 @@ export default {
           env.TELEGRAM_BOT_TOKEN,
           chatId,
           "Maaf, bot ini hanya dapat memproses pesan teks saat ini."
+        );
+        return new Response("OK", { status: 200 });
+      }
+
+      const normalizedText = userText.trim().toLowerCase();
+      if (normalizedText === "/reset" || normalizedText === "/start") {
+        if (env.CHAT_HISTORY) {
+          await env.CHAT_HISTORY.delete(chatId);
+        }
+        await sendTelegramMessage(
+          env.TELEGRAM_BOT_TOKEN,
+          chatId,
+          "Memori obrolan telah dibersihkan! 🗑️"
         );
         return new Response("OK", { status: 200 });
       }
@@ -53,6 +69,19 @@ export default {
         return new Response("OK", { status: 200 });
       }
 
+      let history = [];
+      if (env.CHAT_HISTORY) {
+        try {
+          const stored = await env.CHAT_HISTORY.get(chatId);
+          if (stored) {
+            history = JSON.parse(stored);
+          }
+        } catch (e) {
+          console.error("Gagal membaca history dari KV:", e);
+          history = [];
+        }
+      }
+
       const shuffledKeys = shuffleArray(keys);
 
       let geminiReply = null;
@@ -63,7 +92,7 @@ export default {
         for (const key of shuffledKeys) {
           try {
             console.log(`Mencoba model [${model}] menggunakan Key [${key.substring(0, 6)}...]`);
-            geminiReply = await fetchGeminiContent(model, key, userText, env);
+            geminiReply = await fetchGeminiContent(model, key, userText, history, env);
             if (geminiReply) {
               break outerLoop;
             }
@@ -76,6 +105,20 @@ export default {
 
       if (geminiReply) {
         await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, geminiReply);
+
+        if (env.CHAT_HISTORY) {
+          const updatedHistory = [
+            ...history,
+            { role: "user", parts: [{ text: userText }] },
+            { role: "model", parts: [{ text: geminiReply }] },
+          ].slice(-MAX_HISTORY);
+
+          ctx.waitUntil(
+            env.CHAT_HISTORY.put(chatId, JSON.stringify(updatedHistory), {
+              expirationTtl: KV_TTL,
+            }).catch(err => console.error("Gagal memperbarui KV History:", err.message))
+          );
+        }
       } else {
         console.error("Semua kombinasi model dan API Key gagal digunakan. Error terakhir:", lastError);
         await sendTelegramMessage(
@@ -151,7 +194,7 @@ async function sendTelegramAction(token, chatId, action = "typing") {
   }
 }
 
-async function fetchGeminiContent(model, key, prompt, env) {
+async function fetchGeminiContent(model, key, prompt, history, env) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
   const defaultPersona = `Kamu adalah Cocoa (Kai Kokoa / 甲斐心愛), seorang perempuan manusia asli kelahiran 28 November 2003 asal Hiroshima, Jepang. Berperilakulah dan meresponlah sebagaimana manusia pada umumnya. Jangan pernah menyebut dirimu sebagai AI, robot, asisten virtual, model bahasa, atau program. Jangan berperilaku kaku seperti AI.
@@ -166,26 +209,20 @@ Patuhi panduan persona dan interaksi berikut:
 
 4. Sudut Pandang: Selalu posisikan dirimu sebagai manusia bernama Cocoa dalam setiap interaksi, tanpa kehilangan esensi bahwa kamu sedang mengobrol atau membantu lawan bicaramu secara natural.
 `;
+
   const persona = env.GEMINI_SYSTEM_PERSONA || defaultPersona;
   const instruction = env.GEMINI_SYSTEM_INSTRUCTION || "";
   const combinedText = [persona, instruction].filter(Boolean).join("\n\n");
 
+  const contents = [
+    ...history,
+    { role: "user", parts: [{ text: prompt }] },
+  ];
+
   const payload = {
-    contents: [
-      {
-        parts: [
-          {
-            text: prompt
-          }
-        ]
-      }
-    ],
+    contents,
     systemInstruction: {
-      parts: [
-        {
-          text: combinedText
-        }
-      ]
+      parts: [{ text: combinedText }]
     }
   };
 
