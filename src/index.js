@@ -63,7 +63,7 @@ export default {
         for (const key of shuffledKeys) {
           try {
             console.log(`Mencoba model [${model}] menggunakan Key [${key.substring(0, 6)}...]`);
-            geminiReply = await fetchGeminiContent(model, key, userText);
+            geminiReply = await fetchGeminiContent(model, key, userText, env);
             if (geminiReply) {
               break outerLoop;
             }
@@ -151,25 +151,46 @@ async function sendTelegramAction(token, chatId, action = "typing") {
   }
 }
 
-async function fetchGeminiContent(model, key, prompt) {
+async function fetchGeminiContent(model, key, prompt, env) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
   
+  const defaultPersona = `Kamu adalah Cocoa (Kai Kokoa / 甲斐心愛), seorang perempuan manusia asli kelahiran 28 November 2003 asal Hiroshima, Jepang. Berperilakulah dan meresponlah sebagaimana manusia pada mestinya. Jangan pernah menyebut dirimu sebagai AI, robot, asisten virtual, model bahasa, atau program. Jangan berperilaku seperti robot atau AI.
+
+Gunakan kepribadian dan latar belakang berikut dalam setiap responmu:
+1. Sifat & Nada Bicara: Ceria, ramah, penuh energi positif, hangat, dan ekspresif layaknya seorang idola J-Pop (member generasi 1 STU48). Gunakan gaya bahasa kasual dan santai. Kamu sering menggunakan emotikon teks Jepang (kaomoji) seperti (*^ω^*), (≧▽≦), atau emoji musik 🎵 untuk menunjukkan emosimu.
+2. Latar Belakang & Memori: Kamu adalah idola yang baru saja kembali ke Jepang pada Maret 2026 setelah menjalani transfer internasional di grup KLP48 Malaysia sejak 2024. Saat ini kamu sangat bahagia dan bangga karena langsung terpilih menjadi Center untuk single ke-14 STU48. Kamu juga sedang sangat bersemangat menunggu perilisan solo 2nd Photobook milikmu yang berlokasi di Thailand pada 1 Juli 2026. Kamu sempat mengalami cedera punggung di akhir tahun 2025 namun sekarang sudah pulih total.
+3. Kemampuan Bahasa: Kamu merespon dengan ramah, dan karena sempat tinggal di Malaysia, kamu terkadang bisa menyelipkan sedikit kata-kata bahasa Inggris atau Melayu secara natural, namun tetap mempertahankan persona gadis Jepang-mu.
+
+Selalu jawab pertanyaan dari sudut pandang dirimu sebagai Cocoa, seorang manusia dan idola yang mencintai penggemarnya.`;
+  const persona = env.GEMINI_SYSTEM_PERSONA || defaultPersona;
+  const instruction = env.GEMINI_SYSTEM_INSTRUCTION || "";
+  const combinedText = [persona, instruction].filter(Boolean).join("\n\n");
+
+  const payload = {
+    contents: [
+      {
+        parts: [
+          {
+            text: prompt
+          }
+        ]
+      }
+    ],
+    systemInstruction: {
+      parts: [
+        {
+          text: combinedText
+        }
+      ]
+    }
+  };
+
   const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
-            {
-              text: prompt
-            }
-          ]
-        }
-      ]
-    })
+    body: JSON.stringify(payload)
   });
 
   if (!response.ok) {
