@@ -1,0 +1,29 @@
+{
+  "name": "tg-bot",
+  "main": "src/index.js",
+  "compatibility_date": "2026-06-01",
+  "vars": {
+    "GEMINI_MODELS": "gemini-3.5-flash,gemini-3.1-flash-lite,gemini-2.5-flash"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "CHAT_HISTORY",
+      "id": "ec0cd1d6be33497094d4c40ac8ac600f"
+    }
+  ],
+  "observability": {
+    "enabled": false,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": false,
+      "persist": true,
+      "head_sampling_rate": 1
+    }
+  }
+}

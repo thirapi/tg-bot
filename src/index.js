@@ -12,54 +12,42 @@ export default {
       const payload = await request.json();
       const message = payload.message || payload.edited_message;
 
-      if (!message || !message.chat || !message.chat.id) {
-        return new Response("OK", { status: 200 });
-      }
+      if (!message?.chat?.id) return new Response("OK", { status: 200 });
 
       const chatId = String(message.chat.id);
 
       if (chatId !== String(env.ALLOWED_USER_ID)) {
-        console.warn(`Unauthorized access attempt: ${chatId}`);
+        console.warn(`Unauthorized: ${chatId}`);
         return new Response("OK", { status: 200 });
       }
 
-      const rateLimitKey = `rl:${chatId}`;
-      const isRateLimited = await env.CHAT_HISTORY.get(rateLimitKey);
-      if (isRateLimited) {
+      const rateKey = `rl:${chatId}`;
+      if (await env.CHAT_HISTORY.get(rateKey)) {
         return new Response("OK", { status: 200 });
       }
-      await env.CHAT_HISTORY.put(rateLimitKey, "1", { expirationTtl: RATE_LIMIT_SECONDS });
+      await env.CHAT_HISTORY.put(rateKey, "1", { expirationTtl: RATE_LIMIT_SECONDS });
 
-      const text = message.text || message.caption || "";
-      const normalizedText = text.trim().toLowerCase();
+      const normalized = (message.text || message.caption || "").trim().toLowerCase();
 
-      if (normalizedText === "/start" || normalizedText === "/reset") {
+      if (["/start", "/reset"].includes(normalized)) {
         await env.CHAT_HISTORY.delete(chatId);
-        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Memori telah dibersihkan\\. Siap memulai obrolan baru\\! 🚀");
+        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "✅ *Memori dibersihkan.* Siap obrolan baru!", "Markdown");
         return new Response("OK", { status: 200 });
       }
 
-      if (normalizedText === "/help") {
-        const helpMsg = `*Daftar Perintah:*
-/start \\- Memulai bot
-/reset \\- Menghapus riwayat obrolan
-/help \\- Bantuan
-
-*Kemampuan:*
-💬 Kirim pesan teks
-📸 Kirim foto \\+ caption
-🎙️ Kirim pesan suara \\(Voice\\)`;
-        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, helpMsg);
+      if (normalized === "/help") {
+        const help = `*Bot Personal AI*\n\n/start atau /reset - Bersihkan memori\n/help - Bantuan\n\n*Bisa menerima:*\n• Teks\n• Foto + caption\n• Voice message`;
+        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, help, "Markdown");
         return new Response("OK", { status: 200 });
       }
 
       ctx.waitUntil(processMessage(message, env));
 
-      return new Response("OK", { status: 200 });
     } catch (err) {
       console.error("Critical Fetch Error:", err);
-      return new Response("Internal Server Error", { status: 500 });
     }
+
+    return new Response("OK", { status: 200 });
   }
 };
 
@@ -67,77 +55,76 @@ async function processMessage(message, env) {
   const chatId = String(message.chat.id);
   let isProcessing = true;
 
-  const typingInterval = setInterval(() => {
-    if (isProcessing) sendTelegramAction(env.TELEGRAM_BOT_TOKEN, chatId, "typing");
-    else clearInterval(typingInterval);
-  }, 4000);
-  sendTelegramAction(env.TELEGRAM_BOT_TOKEN, chatId, "typing");
+  const typingLoop = async () => {
+    while (isProcessing) {
+      await sendTelegramAction(env.TELEGRAM_BOT_TOKEN, chatId, "typing");
+      await new Promise(r => setTimeout(r, 3500));
+    }
+  };
+  typingLoop();
 
   try {
     let history = [];
     const stored = await env.CHAT_HISTORY.get(chatId);
-    if (stored) history = JSON.parse(stored);
+    if (stored) {
+      try { history = JSON.parse(stored); } catch (e) {}
+    }
 
-    let mediaData = null;
     let userPrompt = message.text || message.caption || "";
+    let mediaPart = null;
 
     if (message.photo) {
       const fileId = message.photo[message.photo.length - 1].file_id;
-      mediaData = await prepareMediaPart(env.TELEGRAM_BOT_TOKEN, fileId, "image/jpeg");
-      if (!userPrompt) userPrompt = "Apa yang ada di foto ini?";
+      mediaPart = await prepareMediaPart(env.TELEGRAM_BOT_TOKEN, fileId, "image/jpeg");
+      if (!userPrompt) userPrompt = "Deskripsikan gambar ini dengan detail.";
     } else if (message.voice) {
-      mediaData = await prepareMediaPart(env.TELEGRAM_BOT_TOKEN, message.voice.file_id, "audio/ogg");
-      if (!userPrompt) userPrompt = "Tolong jelaskan/jawab pesan suara ini.";
+      mediaPart = await prepareMediaPart(env.TELEGRAM_BOT_TOKEN, message.voice.file_id, "audio/ogg");
+      if (!userPrompt) userPrompt = "Transkrip dan jawab pesan suara ini.";
     }
 
-    if (!userPrompt && !mediaData) {
-      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Maaf, aku bingung harus merespon apa\\. Coba kirim teks, foto, atau suara ya\\! 😅");
+    if (!userPrompt && !mediaPart) {
+      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Kirim teks, foto, atau voice ya 😊", null);
       return;
     }
 
-    const keys = env.GEMINI_API_KEYS.split(",").map(k => k.trim());
-    const models = (env.GEMINI_MODELS || "gemini-1.5-flash,gemini-2.0-flash-exp").split(",").map(m => m.trim());
-    
-    let geminiReply = null;
-    let lastError = null;
+    const keys = (env.GEMINI_API_KEYS || "").split(",").map(k => k.trim()).filter(Boolean);
+    const models = (env.GEMINI_MODELS || "gemini-2.5-flash,gemini-1.5-flash").split(",").map(m => m.trim()).filter(Boolean);
 
-    outerLoop:
+    if (keys.length === 0) throw new Error("No API Key");
+
+    let geminiReply = null;
+
     for (const model of models) {
       for (const key of shuffleArray(keys)) {
         try {
-          geminiReply = await fetchGeminiContent(model, key, userPrompt, mediaData, history, env);
-          if (geminiReply) break outerLoop;
-        } catch (err) {
-          console.error(`Error with model ${model}:`, err.message);
-          lastError = err;
+          geminiReply = await fetchGeminiContent(model, key, userPrompt, mediaPart, history, env);
+          if (geminiReply) break;
+        } catch (e) {
+          console.error(`Failed ${model}:`, e.message);
         }
       }
+      if (geminiReply) break;
     }
 
     if (geminiReply) {
-      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, geminiReply);
+      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, geminiReply, "Markdown");
 
-      const newHistory = [
+      const updatedHistory = [
         ...history,
-        { role: "user", parts: [{ text: userPrompt }, ...(mediaData ? [mediaData] : [])].filter(p => p.text || p.inline_data) },
+        { role: "user", parts: [{ text: userPrompt }] },
         { role: "model", parts: [{ text: geminiReply }] }
-      ].slice(-(MAX_HISTORY * 2));
+      ].slice(-MAX_HISTORY);
 
-      await env.CHAT_HISTORY.put(chatId, JSON.stringify(newHistory), { expirationTtl: KV_TTL });
+      await env.CHAT_HISTORY.put(chatId, JSON.stringify(updatedHistory), { expirationTtl: KV_TTL });
     } else {
-      throw lastError || new Error("All keys failed");
+      throw new Error("All models failed");
     }
 
   } catch (err) {
-    console.error("Process Message Error:", err);
-    await sendTelegramMessage(
-      env.TELEGRAM_BOT_TOKEN, 
-      chatId, 
-      "Aduh, maaf ya, sepertinya ada gangguan teknis sebentar\\. Boleh coba lagi nanti? 🙏"
-    );
+    console.error("Process Error:", err);
+    await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Maaf ya, sedang ada gangguan. Coba lagi sebentar 🙏", null);
   } finally {
     isProcessing = false;
-    clearInterval(typingInterval);
   }
 }
 
@@ -152,33 +139,21 @@ async function fetchGeminiContent(model, key, prompt, mediaPart, history, env) {
 
   const systemPersona = env.GEMINI_SYSTEM_PERSONA || "";
   const systemInstruction = env.GEMINI_SYSTEM_INSTRUCTION || "";
-  const timeContext = `[Sistem: Waktu saat ini di Jakarta/WIB adalah ${wibTime}. Gunakan ini untuk konteks waktu.]`;
-  
-  const finalSystemInstruction = [systemPersona, systemInstruction, timeContext].filter(Boolean).join("\n\n");
+  const timeContext = `[Sistem: Waktu saat ini ${wibTime} WIB.]`;
+
+  const finalSystem = [systemPersona, systemInstruction, timeContext].filter(Boolean).join("\n\n");
 
   const userParts = [{ text: prompt }];
   if (mediaPart) userParts.push(mediaPart);
 
-  const contents = [
-    ...history,
-    { role: "user", parts: userParts }
-  ];
-
   const payload = {
-    contents,
-    systemInstruction: { parts: [{ text: finalSystemInstruction }] },
+    contents: [...history, { role: "user", parts: userParts }],
+    systemInstruction: { parts: [{ text: finalSystem }] },
     generationConfig: {
-      temperature: 0.85,
+      temperature: 0.7,
       topP: 0.95,
       maxOutputTokens: 2048,
-    },
-    safetySettings: [
-      { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-      { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-      { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-      { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-      { category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "BLOCK_NONE" }
-    ]
+    }
   };
 
   const response = await fetch(url, {
@@ -188,33 +163,32 @@ async function fetchGeminiContent(model, key, prompt, mediaPart, history, env) {
   });
 
   if (!response.ok) {
-    const errorData = await response.text();
-    throw new Error(`Gemini API Error: ${response.status} - ${errorData}`);
+    const errText = await response.text();
+    throw new Error(`HTTP ${response.status}: ${errText}`);
   }
 
   const data = await response.json();
   return data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
 }
 
-async function sendTelegramMessage(token, chatId, text) {
+async function sendTelegramMessage(token, chatId, text, parseMode = "Markdown") {
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
-  const payload = {
-    chat_id: chatId,
-    text: text,
-    parse_mode: "MarkdownV2"
-  };
+  let payload = { chat_id: chatId, text };
 
-  const res = await fetch(url, {
+  if (parseMode) payload.parse_mode = parseMode;
+
+  let res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
 
-  if (!res.ok) {
+  if (!res.ok && parseMode) {
+    delete payload.parse_mode;
     await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text: text })
+      body: JSON.stringify(payload)
     });
   }
 }
@@ -229,10 +203,9 @@ async function sendTelegramAction(token, chatId, action) {
 }
 
 async function prepareMediaPart(token, fileId, mimeType) {
-  const getFileUrl = `https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`;
-  const fileRes = await fetch(getFileUrl);
-  const fileData = await fileRes.json();
-  
+  const getFile = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
+  const fileData = await getFile.json();
+
   if (!fileData.ok) return null;
 
   const filePath = fileData.result.file_path;
@@ -240,6 +213,7 @@ async function prepareMediaPart(token, fileId, mimeType) {
 
   const mediaRes = await fetch(downloadUrl);
   const buffer = await mediaRes.arrayBuffer();
+  
   const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
 
   return {
@@ -257,8 +231,4 @@ function shuffleArray(array) {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
-}
-
-function escapeMarkdownV2(text) {
-  return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, "\\$&");
 }
