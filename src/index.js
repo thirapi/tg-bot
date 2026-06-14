@@ -150,7 +150,7 @@ async function fetchGeminiContent(model, key, prompt, mediaPart, history, env) {
     hour: "2-digit", minute: "2-digit", hour12: false
   });
 
-  const systemPersona = env.GEMINI_SYSTEM_PERSONA || "Kamu adalah Cocoa, asisten pribadi yang ramah dan cerdas.";
+  const systemPersona = env.GEMINI_SYSTEM_PERSONA || "";
   const systemInstruction = env.GEMINI_SYSTEM_INSTRUCTION || "";
   const timeContext = `[Sistem: Waktu saat ini di Jakarta/WIB adalah ${wibTime}. Gunakan ini untuk konteks waktu.]`;
   
