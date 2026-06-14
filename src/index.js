@@ -1,6 +1,7 @@
 const KV_TTL = 3600;
 const MAX_HISTORY = 15;
 const RATE_LIMIT_SECONDS = 3;
+const activeRateLimits = new Set();
 
 export default {
   async fetch(request, env, ctx) {
@@ -29,15 +30,16 @@ export default {
         await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Sabar ya, aku masih memproses pesanmu yang sebelumnya! ⏳");
         return new Response("OK", { status: 200 });
       }
-      await env.CHAT_HISTORY.put(lockKey, "1", { expirationTtl: 15 });
+      // Set expirationTtl to 60 as it is the minimum allowed by Cloudflare KV
+      await env.CHAT_HISTORY.put(lockKey, "1", { expirationTtl: 60 });
 
-      const rateLimitKey = `rl:${chatId}`;
-      const isRateLimited = await env.CHAT_HISTORY.get(rateLimitKey);
-      if (isRateLimited) {
+      // In-memory Rate Limiting
+      if (activeRateLimits.has(chatId)) {
         await env.CHAT_HISTORY.delete(lockKey);
         return new Response("OK", { status: 200 });
       }
-      await env.CHAT_HISTORY.put(rateLimitKey, "1", { expirationTtl: RATE_LIMIT_SECONDS });
+      activeRateLimits.add(chatId);
+      setTimeout(() => activeRateLimits.delete(chatId), RATE_LIMIT_SECONDS * 1000);
 
       const text = message.text || message.caption || "";
       const normalizedText = text.trim().toLowerCase();
