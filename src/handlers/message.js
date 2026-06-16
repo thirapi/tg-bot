@@ -69,13 +69,23 @@ export async function processMessage(message, env) {
     let iteration = 0;
     let finalGeminiText = null;
 
+    const blacklistedModels = new Set();
+
     while (iteration < MAX_AGENT_ITERATIONS) {
       iteration++;
       let geminiResponse = null;
       let lastError = null;
 
-      outerLoop: for (const model of models) {
-        for (const key of shuffleArray(keys)) {
+      const activeModels = models.filter((m) => !blacklistedModels.has(m));
+      if (activeModels.length === 0) {
+        throw new Error(
+          "Seluruh model Gemini tidak dapat digunakan (terkena blacklist).",
+        );
+      }
+
+      outerLoop: for (const model of activeModels) {
+        const shuffledKeys = shuffleArray([...keys]);
+        for (const key of shuffledKeys) {
           try {
             geminiResponse = await fetchGeminiGenerate(
               model,
@@ -87,6 +97,14 @@ export async function processMessage(message, env) {
           } catch (err) {
             console.error(`Error dengan model ${model}:`, err.message);
             lastError = err;
+
+            if (err.message.includes("404") || err.message.includes("400")) {
+              console.warn(
+                `Model ${model} dimasukkan ke blacklist karena error fatal.`,
+              );
+              blacklistedModels.add(model);
+              break;
+            }
           }
         }
       }
