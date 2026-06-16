@@ -68,11 +68,20 @@ export async function processMessage(message, env) {
     let currentContents = [...history, { role: "user", parts: userParts }];
     let iteration = 0;
     let finalGeminiText = null;
+    const startTime = Date.now();
+    const EXECUTION_TIMEOUT = 20000;
 
     const blacklistedModels = new Set();
 
     while (iteration < MAX_AGENT_ITERATIONS) {
       iteration++;
+
+      if (Date.now() - startTime > EXECUTION_TIMEOUT) {
+        throw new Error(
+          "Waktu eksekusi terlalu lama (Timeout). Permintaanmu terlalu kompleks untuk diselesaikan dalam satu sesi. ⏳",
+        );
+      }
+
       let geminiResponse = null;
       let lastError = null;
 
@@ -142,7 +151,7 @@ export async function processMessage(message, env) {
           });
         }
         currentContents.push({
-          role: "tool",
+          role: "function",
           parts: functionResponses,
         });
         continue;

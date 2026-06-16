@@ -249,7 +249,7 @@ export const githubTools = [
         },
       },
       {
-        name: "updateGitHubIssue",
+        name: "updateIssueState",
         description: "Memperbarui status atau detail issue GitHub (misal: menutup issue).",
         parameters: {
           type: "OBJECT",
@@ -269,7 +269,7 @@ export const githubTools = [
         },
       },
       {
-        name: "listGitHubDirectory",
+        name: "listDirectoryContents",
         description: "Melihat isi dari sebuah direktori di repositori GitHub.",
         parameters: {
           type: "OBJECT",
@@ -283,7 +283,7 @@ export const githubTools = [
         },
       },
       {
-        name: "deleteGitHubFile",
+        name: "deleteFile",
         description: "Menghapus file dari repositori GitHub.",
         parameters: {
           type: "OBJECT",
@@ -292,15 +292,15 @@ export const githubTools = [
             repo: { type: "STRING", description: "Nama repositori." },
             path: { type: "STRING", description: "Path ke file yang akan dihapus." },
             message: { type: "STRING", description: "Pesan commit penghapusan." },
-            sha: { type: "STRING", description: "SHA file yang akan dihapus (didapat dari getFileContent atau listGitHubDirectory)." },
+            sha: { type: "STRING", description: "SHA file yang akan dihapus (didapat dari getFileContent atau listDirectoryContents)." },
             branch: { type: "STRING", description: "Nama branch." },
           },
           required: ["owner", "repo", "path", "message", "sha"],
         },
       },
       {
-        name: "searchGitHubCode",
-        description: "Mencari kode di seluruh repositori GitHub menggunakan query.",
+        name: "searchInFiles",
+        description: "Mencari kode di seluruh repositori GitHub menggunakan query (seperti grep).",
         parameters: {
           type: "OBJECT",
           properties: {
