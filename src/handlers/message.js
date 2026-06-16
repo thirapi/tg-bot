@@ -155,6 +155,15 @@ export async function processMessage(message, env) {
             result = await executeTool(name, args, env, chatId);
           } catch (toolErr) {
             console.error(`Tool "${name}" gagal:`, toolErr);
+            if (
+              toolErr.message.includes("403") ||
+              toolErr.message.includes("401") ||
+              toolErr.message.includes("Resource not accessible")
+            ) {
+              throw new Error(
+                "Gagal menjalankan tool karena masalah otentikasi (403/401). Mohon periksa token API/PAT GitHub!",
+              );
+            }
             result = { error: toolErr.message };
           }
           functionResponses.push({
