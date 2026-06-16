@@ -37,14 +37,24 @@ export async function fetchGeminiGenerate(model, key, contents, env) {
       maxOutputTokens: 8192,
     },
   };
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    const errorData = await response.text();
-    throw new Error(`Gemini API Error: ${response.status} - ${errorData}`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) {
+      const errorData = await response.text();
+      throw new Error(`Gemini API Error: ${response.status} - ${errorData}`);
+    }
+    return response.json();
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
   }
-  return response.json();
 }

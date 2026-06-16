@@ -149,13 +149,20 @@ export async function processMessage(message, env) {
       await env.CHAT_HISTORY.put(chatId, JSON.stringify(newHistory), {
         expirationTtl: KV_TTL,
       });
+    } else {
+      console.warn("Gemini did not provide final text output.");
+      await sendTelegramMessage(
+        env.TELEGRAM_BOT_TOKEN,
+        chatId,
+        "Maaf, aku tidak bisa memberikan jawaban teks untuk permintaan itu, tapi aku sudah mencoba menjalankan instruksimu. Ada lagi yang bisa kubantu? 😊",
+      );
     }
   } catch (err) {
     console.error("processMessage Error:", err);
     await sendTelegramMessage(
       env.TELEGRAM_BOT_TOKEN,
       chatId,
-      "Aduh, sepertinya ada gangguan teknis saat menghubungi GitHub/Gemini. Coba lagi ya! 🙏",
+      `Aduh, sepertinya ada gangguan teknis: ${err.message}. Coba lagi ya! 🙏`,
     );
   } finally {
     isProcessing = false;

@@ -248,6 +248,69 @@ export const githubTools = [
           required: ["owner", "repo", "issue_number", "body"],
         },
       },
+      {
+        name: "updateGitHubIssue",
+        description: "Memperbarui status atau detail issue GitHub (misal: menutup issue).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            owner: { type: "STRING", description: "Username pemilik repo." },
+            repo: { type: "STRING", description: "Nama repositori." },
+            issue_number: { type: "NUMBER", description: "Nomor issue." },
+            state: {
+              type: "STRING",
+              description: "Status baru: 'open' atau 'closed'.",
+              enum: ["open", "closed"],
+            },
+            title: { type: "STRING", description: "Judul baru jika ingin diubah." },
+            body: { type: "STRING", description: "Deskripsi baru jika ingin diubah." },
+          },
+          required: ["owner", "repo", "issue_number"],
+        },
+      },
+      {
+        name: "listGitHubDirectory",
+        description: "Melihat isi dari sebuah direktori di repositori GitHub.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            owner: { type: "STRING", description: "Username pemilik repo." },
+            repo: { type: "STRING", description: "Nama repositori." },
+            path: { type: "STRING", description: "Path ke direktori (contoh: 'src/utils')." },
+            ref: { type: "STRING", description: "Nama branch atau tag." },
+          },
+          required: ["owner", "repo", "path"],
+        },
+      },
+      {
+        name: "deleteGitHubFile",
+        description: "Menghapus file dari repositori GitHub.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            owner: { type: "STRING", description: "Username pemilik repo." },
+            repo: { type: "STRING", description: "Nama repositori." },
+            path: { type: "STRING", description: "Path ke file yang akan dihapus." },
+            message: { type: "STRING", description: "Pesan commit penghapusan." },
+            sha: { type: "STRING", description: "SHA file yang akan dihapus (didapat dari getFileContent atau listGitHubDirectory)." },
+            branch: { type: "STRING", description: "Nama branch." },
+          },
+          required: ["owner", "repo", "path", "message", "sha"],
+        },
+      },
+      {
+        name: "searchGitHubCode",
+        description: "Mencari kode di seluruh repositori GitHub menggunakan query.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            q: { type: "STRING", description: "Query pencarian (contoh: 'function login repo:owner/repo')." },
+            sort: { type: "STRING", description: "Urutan: 'indexed' (default)." },
+            order: { type: "STRING", description: "Order: 'desc' atau 'asc'." },
+          },
+          required: ["q"],
+        },
+      },
     ],
   },
 ];

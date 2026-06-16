@@ -73,6 +73,31 @@ export async function executeTool(name, args, env) {
       const endpoint = `repos/${args.owner}/${args.repo}/issues/${args.issue_number}/comments`;
       return callGitHubAPI(env, endpoint, "POST", { body: args.body });
     }
+    case "updateGitHubIssue": {
+      const endpoint = `repos/${args.owner}/${args.repo}/issues/${args.issue_number}`;
+      const body = {};
+      if (args.state) body.state = args.state;
+      if (args.title) body.title = args.title;
+      if (args.body) body.body = args.body;
+      return callGitHubAPI(env, endpoint, "PATCH", body);
+    }
+    case "listGitHubDirectory": {
+      const endpoint = `repos/${args.owner}/${args.repo}/contents/${args.path}${args.ref ? "?ref=" + args.ref : ""}`;
+      return callGitHubAPI(env, endpoint);
+    }
+    case "deleteGitHubFile": {
+      const endpoint = `repos/${args.owner}/${args.repo}/contents/${args.path}`;
+      const body = {
+        message: args.message,
+        sha: args.sha,
+      };
+      if (args.branch) body.branch = args.branch;
+      return callGitHubAPI(env, endpoint, "DELETE", body);
+    }
+    case "searchGitHubCode": {
+      const endpoint = `search/code?q=${encodeURIComponent(args.q)}${args.sort ? "&sort=" + args.sort : ""}${args.order ? "&order=" + args.order : ""}`;
+      return callGitHubAPI(env, endpoint);
+    }
     default:
       throw new Error(`Tool "${name}" tidak dikenal atau belum diimplementasikan.`);
   }
