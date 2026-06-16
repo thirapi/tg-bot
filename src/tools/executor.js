@@ -81,6 +81,15 @@ export async function executeTool(name, args, env) {
       if (args.body) body.body = args.body;
       return callGitHubAPI(env, endpoint, "PATCH", body);
     }
+    case "updatePRState": {
+      const endpoint = `repos/${args.owner}/${args.repo}/pulls/${args.pull_number}`;
+      const body = {};
+      if (args.state) body.state = args.state;
+      if (args.title) body.title = args.title;
+      if (args.body) body.body = args.body;
+      if (args.base) body.base = args.base;
+      return callGitHubAPI(env, endpoint, "PATCH", body);
+    }
     case "listDirectoryContents": {
       const endpoint = `repos/${args.owner}/${args.repo}/contents/${args.path}${args.ref ? "?ref=" + args.ref : ""}`;
       return callGitHubAPI(env, endpoint);

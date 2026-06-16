@@ -269,6 +269,27 @@ export const githubTools = [
         },
       },
       {
+        name: "updatePRState",
+        description: "Memperbarui status atau detail Pull Request GitHub (misal: menutup PR tanpa merge).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            owner: { type: "STRING", description: "Username pemilik repo." },
+            repo: { type: "STRING", description: "Nama repositori." },
+            pull_number: { type: "NUMBER", description: "Nomor Pull Request." },
+            state: {
+              type: "STRING",
+              description: "Status baru: 'open' atau 'closed'.",
+              enum: ["open", "closed"],
+            },
+            title: { type: "STRING", description: "Judul baru jika ingin diubah." },
+            body: { type: "STRING", description: "Deskripsi baru jika ingin diubah." },
+            base: { type: "STRING", description: "Branch tujuan baru (contoh: 'main')." },
+          },
+          required: ["owner", "repo", "pull_number"],
+        },
+      },
+      {
         name: "listDirectoryContents",
         description: "Melihat isi dari sebuah direktori di repositori GitHub.",
         parameters: {
