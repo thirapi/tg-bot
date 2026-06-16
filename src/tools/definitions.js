@@ -332,6 +332,24 @@ export const githubTools = [
           required: ["q"],
         },
       },
+      {
+        name: "triggerDeveloperWorkflow",
+        description: "Memicu workflow pengembangan berat (bengkel kerja) di GitHub Actions untuk tugas seperti kloning repo, analisis file lokal mendalam, modifikasi kode masif, perbaikan error build/compile otomatis, hingga push dan PR. Gunakan ini jika tugas terlalu berat untuk dilakukan via API biasa atau terkena limitasi timeout.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            target_repo: {
+              type: "STRING",
+              description: "Nama repositori target penuh (contoh: 'thirapi/62chan' atau 'thirapi/tg-bot').",
+            },
+            instruction: {
+              type: "STRING",
+              description: "Instruksi atau detail tugas penulisan/perbaikan kode yang harus dilakukan secara mendalam.",
+            },
+          },
+          required: ["target_repo", "instruction"],
+        },
+      },
     ],
   },
 ];

@@ -1,6 +1,6 @@
 import { callGitHubAPI } from "../services/github.js";
 
-export async function executeTool(name, args, env) {
+export async function executeTool(name, args, env, chatId) {
   switch (name) {
     case "listGitHubIssues": {
       const endpoint = `repos/${args.owner}/${args.repo}/issues?state=${args.state || "open"}`;
@@ -106,6 +106,21 @@ export async function executeTool(name, args, env) {
     case "searchInFiles": {
       const endpoint = `search/code?q=${encodeURIComponent(args.q)}${args.sort ? "&sort=" + args.sort : ""}${args.order ? "&order=" + args.order : ""}`;
       return callGitHubAPI(env, endpoint);
+    }
+    case "triggerDeveloperWorkflow": {
+      const endpoint = `repos/thirapi/tg-bot/dispatches`;
+      const body = {
+        event_type: "kokoa-dev-task",
+        client_payload: {
+          target_repo: args.target_repo,
+          instruction: args.instruction,
+          chat_id: chatId,
+        },
+      };
+      await callGitHubAPI(env, endpoint, "POST", body);
+      return {
+        message: "Workflow pengembangan berhasil dipicu di GitHub Actions (Bengkel Kerja). Proses ini akan berjalan di latar belakang (Ubuntu Runner). Aku akan memberikan notifikasi setelah tugas selesai atau jika ada perkembangan lebih lanjut.",
+      };
     }
     default:
       throw new Error(`Tool "${name}" tidak dikenal atau belum diimplementasikan.`);

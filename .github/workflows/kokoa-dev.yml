@@ -1,0 +1,31 @@
+name: Kokoa Dev Workflow (Bengkel Kerja)
+
+on:
+  repository_dispatch:
+    types: [kokoa-dev-task]
+
+jobs:
+  execute-task:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Command Center
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Run Executor Script
+        env:
+          TARGET_REPO: ${{ github.event.client_payload.target_repo }}
+          INSTRUCTION: ${{ github.event.client_payload.instruction }}
+          CHAT_ID: ${{ github.event.client_payload.chat_id }}
+          GLOBAL_WORKER_PAT: ${{ secrets.GLOBAL_WORKER_PAT }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          GEMINI_MODELS: ${{ vars.GEMINI_MODELS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: node scripts/runner-executor.js

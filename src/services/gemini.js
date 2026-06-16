@@ -38,7 +38,7 @@ export async function fetchGeminiGenerate(model, key, contents, env) {
     },
   };
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000);
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
 
   try {
     const response = await fetch(url, {
@@ -48,13 +48,20 @@ export async function fetchGeminiGenerate(model, key, contents, env) {
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
+
     if (!response.ok) {
       const errorData = await response.text();
+      if (response.status === 429 || response.status === 503) {
+        throw new Error(`GEMINI_RETRY_TRIGGER: ${response.status} - ${errorData}`);
+      }
       throw new Error(`Gemini API Error: ${response.status} - ${errorData}`);
     }
     return response.json();
   } catch (err) {
     clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      throw new Error("GEMINI_RETRY_TRIGGER: Request Timeout (8s)");
+    }
     throw err;
   }
 }

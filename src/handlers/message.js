@@ -72,13 +72,14 @@ export async function processMessage(message, env) {
     const EXECUTION_TIMEOUT = 20000;
 
     const blacklistedModels = new Set();
+    const blacklistedKeys = new Set();
 
     while (iteration < MAX_AGENT_ITERATIONS) {
       iteration++;
 
       if (Date.now() - startTime > EXECUTION_TIMEOUT) {
         throw new Error(
-          "Waktu eksekusi terlalu lama (Timeout). Permintaanmu terlalu kompleks untuk diselesaikan dalam satu sesi. ⏳",
+          "Waktu eksekusi hampir habis (Timeout). Mohon pecah permintaanmu menjadi lebih sederhana. ⏳",
         );
       }
 
@@ -88,12 +89,19 @@ export async function processMessage(message, env) {
       const activeModels = models.filter((m) => !blacklistedModels.has(m));
       if (activeModels.length === 0) {
         throw new Error(
-          "Seluruh model Gemini tidak dapat digunakan (terkena blacklist).",
+          "Seluruh model Gemini tidak dapat digunakan (terkena blacklist atau limit).",
         );
       }
 
       outerLoop: for (const model of activeModels) {
-        const shuffledKeys = shuffleArray([...keys]);
+        const availableKeys = keys.filter(k => !blacklistedKeys.has(k));
+        const shuffledKeys = shuffleArray(availableKeys);
+        
+        if (shuffledKeys.length === 0) {
+          console.warn(`Semua API Key untuk model ${model} sudah dicoba dan gagal/limit.`);
+          continue;
+        }
+
         for (const key of shuffledKeys) {
           try {
             geminiResponse = await fetchGeminiGenerate(
@@ -104,12 +112,18 @@ export async function processMessage(message, env) {
             );
             if (geminiResponse) break outerLoop;
           } catch (err) {
-            console.error(`Error dengan model ${model}:`, err.message);
+            console.error(`Error dengan model ${model} [Key: ${key.slice(0, 6)}...]:`, err.message);
             lastError = err;
+
+            if (err.message.includes("GEMINI_RETRY_TRIGGER")) {
+              console.warn(`[Fallback Triggered] Key ${key.substring(0, 6)}... terkena limit/timeout. Beralih ke key berikutnya.`);
+              blacklistedKeys.add(key);
+              continue;
+            }
 
             if (err.message.includes("404") || err.message.includes("400")) {
               console.warn(
-                `Model ${model} dimasukkan ke blacklist karena error fatal.`,
+                `Model ${model} dimasukkan ke blacklist sesi karena error fatal.`,
               );
               blacklistedModels.add(model);
               break;
@@ -138,7 +152,7 @@ export async function processMessage(message, env) {
           console.log(`Executing Tool: ${name}`, args);
           let result;
           try {
-            result = await executeTool(name, args, env);
+            result = await executeTool(name, args, env, chatId);
           } catch (toolErr) {
             console.error(`Tool "${name}" gagal:`, toolErr);
             result = { error: toolErr.message };
