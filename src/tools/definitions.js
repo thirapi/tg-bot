@@ -225,6 +225,29 @@ export const githubTools = [
           required: ["owner", "repo", "issue_number", "assignees"],
         },
       },
+      {
+        name: "createIssueComment",
+        description: "Membuat komentar baru pada issue atau Pull Request di GitHub.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            owner: {
+              type: "STRING",
+              description: "Username atau organisasi pemilik repo.",
+            },
+            repo: { type: "STRING", description: "Nama repositori." },
+            issue_number: {
+              type: "NUMBER",
+              description: "Nomor issue atau Pull Request.",
+            },
+            body: {
+              type: "STRING",
+              description: "Isi teks komentar.",
+            },
+          },
+          required: ["owner", "repo", "issue_number", "body"],
+        },
+      },
     ],
   },
 ];

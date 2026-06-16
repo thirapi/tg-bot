@@ -69,6 +69,10 @@ export async function executeTool(name, args, env) {
       const endpoint = `repos/${args.owner}/${args.repo}/issues/${args.issue_number}/assignees`;
       return callGitHubAPI(env, endpoint, "POST", { assignees: args.assignees });
     }
+    case "createIssueComment": {
+      const endpoint = `repos/${args.owner}/${args.repo}/issues/${args.issue_number}/comments`;
+      return callGitHubAPI(env, endpoint, "POST", { body: args.body });
+    }
     default:
       throw new Error(`Tool "${name}" tidak dikenal atau belum diimplementasikan.`);
   }

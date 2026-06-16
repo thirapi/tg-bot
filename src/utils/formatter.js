@@ -64,9 +64,9 @@ export function markdownToRichHtml(text) {
     const h3 = line.match(/^###\s+(.+)/);
     const h2 = line.match(/^##\s+(.+)/);
     const h1 = line.match(/^#\s+(.+)/);
-    if (h1) { output.push(`<h1>${inlineFormat(h1[1])}</h1>`); i++; continue; }
-    if (h2) { output.push(`<h2>${inlineFormat(h2[1])}</h2>`); i++; continue; }
-    if (h3) { output.push(`<h3>${inlineFormat(h3[1])}</h3>`); i++; continue; }
+    if (h1) { output.push(`<b>${inlineFormat(h1[1])}</b>`); i++; continue; }
+    if (h2) { output.push(`<b>${inlineFormat(h2[1])}</b>`); i++; continue; }
+    if (h3) { output.push(`<b>${inlineFormat(h3[1])}</b>`); i++; continue; }
     if (line.startsWith("> ")) {
       const quoteLines = [];
       while (i < lines.length && lines[i].startsWith("> ")) {
@@ -79,31 +79,32 @@ export function markdownToRichHtml(text) {
     if (/^[\-\*]\s+/.test(line)) {
       const items = [];
       while (i < lines.length && /^[\-\*]\s+/.test(lines[i])) {
-        items.push(`<li>${inlineFormat(lines[i].replace(/^[\-\*]\s+/, ""))}</li>`);
+        items.push(`• ${inlineFormat(lines[i].replace(/^[\-\*]\s+/, ""))}`);
         i++;
       }
-      output.push(`<ul>${items.join("")}</ul>`);
+      output.push(items.join("\n"));
       continue;
     }
     if (/^\d+\.\s+/.test(line)) {
       const items = [];
       while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
-        items.push(`<li>${inlineFormat(lines[i].replace(/^\d+\.\s+/, ""))}</li>`);
+        items.push(`${inlineFormat(lines[i])}`);
         i++;
       }
-      output.push(`<ol>${items.join("")}</ol>`);
+      output.push(items.join("\n"));
       continue;
     }
     if (/^[-*_]{3,}$/.test(line.trim())) {
-      output.push("<hr/>");
+      output.push("────────────────");
       i++;
       continue;
     }
     if (line.trim() === "") {
+      output.push("");
       i++;
       continue;
     }
-    output.push(`<p>${inlineFormat(line)}</p>`);
+    output.push(inlineFormat(line));
     i++;
   }
   return output.join("\n");
