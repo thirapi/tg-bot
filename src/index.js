@@ -97,7 +97,7 @@ export default {
         await sendTelegramMessage(
           env.TELEGRAM_BOT_TOKEN,
           chatId,
-          "Sabar ya, aku masih memproses permintaanmu sebelumnya\\! ⏳",
+          "Sabar ya, aku masih memproses permintaanmu sebelumnya! ⏳",
         );
         return new Response("OK", { status: 200 });
       }
@@ -122,14 +122,14 @@ export default {
         await sendTelegramMessage(
           env.TELEGRAM_BOT_TOKEN,
           chatId,
-          "Memori telah dibersihkan\\. Aku siap membantumu mengelola GitHub\\! 🚀",
+          "Memori telah dibersihkan. Aku siap membantumu mengelola GitHub! 🚀",
         );
         return new Response("OK", { status: 200 });
       }
 
       if (normalizedText === "/help") {
         const helpMsg =
-          "*Daftar Perintah:*\n/start \\- Memulai bot\n/reset \\- Menghapus riwayat\n/help \\- Bantuan\n\n*Kemampuan Agentic:*\n📂 Kelola Issue GitHub\n🔍 Review Pull Request\n💬 Chat dengan Gemini 2\\.0";
+          "**Daftar Perintah:**\n/start - Memulai bot\n/reset - Menghapus riwayat\n/help - Bantuan\n\n**Kemampuan Agentic:**\n📂 Kelola Issue GitHub\n🔍 Review Pull Request\n💬 Chat dengan Gemini 2.0";
         await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, helpMsg);
         await env.CHAT_HISTORY.delete(lockKey);
         return new Response("OK", { status: 200 });
@@ -188,7 +188,7 @@ async function processMessage(message, env) {
       await sendTelegramMessage(
         env.TELEGRAM_BOT_TOKEN,
         chatId,
-        "Maaf, aku bingung harus merespon apa\\. Coba kirim teks, foto, atau suara ya\\! 😅",
+        "Maaf, aku bingung harus merespon apa. Coba kirim teks, foto, atau suara ya! 😅",
       );
       return;
     }
@@ -286,8 +286,6 @@ async function processMessage(message, env) {
         env.TELEGRAM_BOT_TOKEN,
         chatId,
         finalGeminiText,
-        "MarkdownV2",
-        true,
       );
 
       let newHistory = currentContents.slice(-(MAX_HISTORY * 4));
@@ -304,7 +302,7 @@ async function processMessage(message, env) {
     await sendTelegramMessage(
       env.TELEGRAM_BOT_TOKEN,
       chatId,
-      "Aduh, sepertinya ada gangguan teknis saat menghubungi GitHub/Gemini\\. Coba lagi ya\\! 🙏",
+      "Aduh, sepertinya ada gangguan teknis saat menghubungi GitHub/Gemini. Coba lagi ya! 🙏",
     );
   } finally {
     isProcessing = false;
@@ -425,29 +423,30 @@ async function callGitHubAPI(
   }
 }
 
-function smartEscapeMarkdownV2(text) {
-  const parts = text.split(/(```[\s\S]*?```|`[^`]*`)/g);
-
-  return parts
-    .map((part) => {
-      if (part.startsWith("```") || part.startsWith("`")) {
-        return part.replace(/([\\`])/g, "\\$1");
-      }
-      return part.replace(/([\\()<>#+\-=|{}.!_\[\]~])/g, "\\$1");
-    })
-    .join("");
+function markdownToTelegramHTML(text) {
+  if (!text) return "";
+  
+  let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  
+  html = html.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+  html = html.replace(/(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)/g, '<i>$1</i>');
+  html = html.replace(/```(?:.*?)\n([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+  html = html.replace(/`(.*?)`/g, '<code>$1</code>');
+  html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2">$1</a>');
+  
+  return html;
 }
 
 async function sendTelegramMessage(
   token,
   chatId,
   text,
-  parseMode = "MarkdownV2",
-  useSmartEscape = false,
+  parseMode = "HTML"
 ) {
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
   const MAX_LENGTH = 4000;
-  const processedText = useSmartEscape ? smartEscapeMarkdownV2(text) : text;
+  
+  const processedText = parseMode === "HTML" ? markdownToTelegramHTML(text) : text;
 
   const chunks = [];
   for (let i = 0; i < processedText.length; i += MAX_LENGTH) {
