@@ -44,7 +44,8 @@ export function splitIntoChunks(text, maxLength) {
 
 export function markdownToRichHtml(text) {
   if (!text) return "";
-  const lines = text.split("\n");
+  const cleanedText = text.replace(/\\([_*\\\[\]()~`>#+\-=\|{}.!])/g, "$1");
+  const lines = cleanedText.split("\n");
   const output = [];
   let i = 0;
   while (i < lines.length) {
@@ -57,7 +58,7 @@ export function markdownToRichHtml(text) {
         i++;
       }
       output.push(`<pre><code>${codeLines.join("\n")}</code></pre>`);
-      i++; 
+      i++;
       continue;
     }
     const h3 = line.match(/^###\s+(.+)/);

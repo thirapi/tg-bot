@@ -4,8 +4,6 @@ import { prepareMediaPart } from "../services/media.js";
 import {
   sendTelegramAction,
   sendTelegramMessage,
-  sendRichMessage,
-  sendRichMessageDraft,
 } from "../services/telegram.js";
 import { executeTool } from "../tools/executor.js";
 import { markdownToRichHtml } from "../utils/formatter.js";
@@ -23,7 +21,6 @@ export async function processMessage(message, env) {
     } catch (_) { }
     setTimeout(sendTyping, 4000);
   };
-
   sendTyping();
 
   try {
@@ -59,12 +56,6 @@ export async function processMessage(message, env) {
       );
       return;
     }
-
-    await sendRichMessageDraft(
-      env.TELEGRAM_BOT_TOKEN,
-      chatId,
-      "<tg-thinking>Sedang berpikir...</tg-thinking>",
-    );
 
     const keys = env.GEMINI_API_KEYS.split(",").map((k) => k.trim());
     const models = (env.GEMINI_MODELS || "gemini-2.0-flash-exp,gemini-1.5-flash")
@@ -148,16 +139,7 @@ export async function processMessage(message, env) {
 
     if (finalGeminiText) {
       const richHtml = markdownToRichHtml(finalGeminiText);
-      const richSent = await sendRichMessage(
-        env.TELEGRAM_BOT_TOKEN,
-        chatId,
-        richHtml,
-      );
-
-      if (!richSent) {
-        console.warn("sendRichMessage gagal, fallback ke sendTelegramMessage.");
-        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml);
-      }
+      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml);
 
       let newHistory = currentContents.slice(-(MAX_HISTORY * 4));
       while (newHistory.length > 0 && newHistory[0].role !== "user") {
