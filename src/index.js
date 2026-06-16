@@ -44,6 +44,28 @@ const githubTools = [
           required: ["owner", "repo", "pull_number"],
         },
       },
+      {
+        name: "createGitHubIssue",
+        description: "Membuat issue baru di repositori GitHub tertentu.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            owner: {
+              type: "STRING",
+              description: "Username atau organisasi pemilik repo.",
+            },
+            repo: { type: "STRING", description: "Nama repositori." },
+            title: { type: "STRING", description: "Judul issue." },
+            body: { type: "STRING", description: "Isi atau deskripsi issue." },
+            labels: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "Daftar label untuk issue.",
+            },
+          },
+          required: ["owner", "repo", "title"],
+        },
+      },
     ],
   },
 ];
@@ -302,6 +324,14 @@ async function executeTool(name, args, env) {
         Accept: "application/vnd.github.v3.diff",
       });
 
+    case "createGitHubIssue":
+      const createEndpoint = `repos/${args.owner}/${args.repo}/issues`;
+      return await callGitHubAPI(env, createEndpoint, "POST", {
+        title: args.title,
+        body: args.body,
+        labels: args.labels,
+      });
+
     default:
       throw new Error(`Tool ${name} not implemented.`);
   }
@@ -396,28 +426,14 @@ async function callGitHubAPI(
 }
 
 function smartEscapeMarkdownV2(text) {
-  const parts = text.split(
-    /(```[\s\S]*?```|`[^`]*`|\*[^*]+\*|_[^_]+_|\[[^\]]+\]\([^\)]+\))/g,
-  );
+  const parts = text.split(/(```[\s\S]*?```|`[^`]*`)/g);
 
   return parts
     .map((part) => {
-      if (part.startsWith("```")) return part.replace(/([\\`])/g, "\\$1");
-      if (part.startsWith("`")) return part.replace(/([\\`])/g, "\\$1");
-      if (part.startsWith("[") && part.includes("](")) {
-        const match = part.match(/\[([\s\S]*?)\]\(([\s\S]*?)\)/);
-        if (match) {
-          const linkText = smartEscapeMarkdownV2(match[1]);
-          const linkUrl = match[2].replace(/([\\)])/g, "\\$1");
-          return `[${linkText}](${linkUrl})`;
-        }
+      if (part.startsWith("```") || part.startsWith("`")) {
+        return part.replace(/([\\`])/g, "\\$1");
       }
-      if (part.startsWith("*") && part.endsWith("*"))
-        return "*" + smartEscapeMarkdownV2(part.slice(1, -1)) + "*";
-      if (part.startsWith("_") && part.endsWith("_"))
-        return "_" + smartEscapeMarkdownV2(part.slice(1, -1)) + "_";
-
-      return part.replace(/([_*\[\]()~`>#+\-=|{}.!])/g, "\\$1");
+      return part.replace(/([\\()<>#+\-=|{}.!_\[\]~])/g, "\\$1");
     })
     .join("");
 }
