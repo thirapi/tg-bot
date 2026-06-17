@@ -141,7 +141,6 @@ export async function processMessage(message, env) {
       currentContents.push(modelContent);
       const parts = modelContent.parts || [];
       const functionCalls = parts.filter((p) => p.functionCall);
-      const textPart = parts.find((p) => p.text);
 
       if (functionCalls.length > 0) {
         const functionResponses = [];
@@ -178,11 +177,16 @@ export async function processMessage(message, env) {
         continue;
       }
 
-      if (textPart) {
-        finalGeminiText = textPart.text;
+      const dynamicTextPart = parts.map(p => p.text).filter(Boolean).join("\n");
+
+      if (dynamicTextPart) {
+        finalGeminiText = dynamicTextPart;
         break;
       }
-      break;
+
+      if (functionCalls.length === 0) {
+        break;
+      }
     }
 
     if (finalGeminiText) {
@@ -202,7 +206,7 @@ export async function processMessage(message, env) {
       await sendTelegramMessage(
         env.TELEGRAM_BOT_TOKEN,
         chatId,
-        "Maaf ya, aku nggak bisa kasih jawaban teks buat yang ini, tapi tadi aku udah coba kok jalanin perintahnya. Ada hal lain yang mau dibahas?",
+        "Tugasnya udah aku jalanin ya! Tapi aku nggak dapet respons teks penutup dari sistem nih. Coba cek repo kamu, harusnya kodenya udah ke-update!",
       );
     }
   } catch (err) {
