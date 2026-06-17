@@ -122,9 +122,7 @@ export async function processMessage(message, env) {
             }
 
             if (err.message.includes("404") || err.message.includes("400")) {
-              console.warn(
-                `Model ${model} dimasukkan ke blacklist sesi karena error fatal.`,
-              );
+              console.warn(`Model ${model} dimasukkan ke blacklist sesi karena error fatal.`);
               blacklistedModels.add(model);
               break;
             }
@@ -216,6 +214,10 @@ export async function processMessage(message, env) {
     );
   } finally {
     isProcessing = false;
-    await env.CHAT_HISTORY.delete(lockKey).catch(() => { });
+    console.log(`Releasing lock for chat: ${chatId}`);
+
+    await env.CHAT_HISTORY.delete(lockKey).catch((e) => {
+      console.error(`Gagal menghapus lockKey ${lockKey}:`, e);
+    });
   }
 }
