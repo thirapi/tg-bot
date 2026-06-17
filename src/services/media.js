@@ -13,7 +13,12 @@ export async function prepareMediaPart(token, fileId, mimeType) {
     return null;
   }
   const buffer = await mediaRes.arrayBuffer();
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64 = btoa(binary);
   return {
     inline_data: {
       mime_type: mimeType,

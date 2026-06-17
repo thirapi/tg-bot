@@ -72,7 +72,7 @@ export async function processMessage(message, env) {
     const EXECUTION_TIMEOUT = 90000;
 
     const blacklistedModels = new Set();
-    const blacklistedKeys = new Set();
+    const blacklistedKeysPerModel = new Set();
 
     while (iteration < MAX_AGENT_ITERATIONS) {
       iteration++;
@@ -94,7 +94,17 @@ export async function processMessage(message, env) {
       }
 
       outerLoop: for (const model of activeModels) {
-        const availableKeys = keys.filter(k => !blacklistedKeys.has(k));
+        const availableKeys = [];
+        for (const key of keys) {
+          const keyShort = key.slice(-6);
+          const isLocallyDown = blacklistedKeysPerModel.has(`${model}:${key}`);
+          const isGloballyDown = await env.CHAT_HISTORY.get(`cooldown:${keyShort}`);
+          
+          if (!isLocallyDown && !isGloballyDown) {
+            availableKeys.push(key);
+          }
+        }
+
         const shuffledKeys = shuffleArray(availableKeys);
         
         if (shuffledKeys.length === 0) {
@@ -103,6 +113,7 @@ export async function processMessage(message, env) {
         }
 
         for (const key of shuffledKeys) {
+          const keyShort = key.slice(-6);
           try {
             geminiResponse = await fetchGeminiGenerate(
               model,
@@ -112,12 +123,15 @@ export async function processMessage(message, env) {
             );
             if (geminiResponse) break outerLoop;
           } catch (err) {
-            console.error(`Error dengan model ${model} [Key: ${key.slice(0, 6)}...]:`, err.message);
+            console.error(`Error dengan model ${model} [Key: ${keyShort}...]:`, err.message);
             lastError = err;
 
             if (err.message.includes("GEMINI_RETRY_TRIGGER")) {
-              console.warn(`[Fallback Triggered] Key ${key.substring(0, 6)}... terkena limit/timeout. Beralih ke key berikutnya.`);
-              blacklistedKeys.add(key);
+              console.warn(`[Cooldown Triggered] Key ${keyShort} limit/timeout di model ${model}.`);
+              
+              blacklistedKeysPerModel.add(`${model}:${key}`);
+              
+              await env.CHAT_HISTORY.put(`cooldown:${keyShort}`, "1", { expirationTtl: 300 });
               continue;
             }
 
@@ -193,7 +207,17 @@ export async function processMessage(message, env) {
       const richHtml = markdownToRichHtml(finalGeminiText);
       await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml);
 
-      let newHistory = currentContents.slice(-(MAX_HISTORY * 4));
+      const cleanedHistory = currentContents.map(content => ({
+        role: content.role,
+        parts: content.parts.map(part => {
+          if (part.inline_data) {
+            return { text: `[Media: ${part.inline_data.mime_type}]` };
+          }
+          return part;
+        })
+      }));
+
+      let newHistory = cleanedHistory.slice(-(MAX_HISTORY * 4));
       while (newHistory.length > 0 && newHistory[0].role !== "user") {
         newHistory.shift();
       }

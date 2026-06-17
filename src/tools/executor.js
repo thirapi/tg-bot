@@ -7,7 +7,8 @@ export async function executeTool(name, args, env, chatId) {
       return callGitHubAPI(env, endpoint);
     }
     case "getPRDiff": {
-      const endpoint = `repos/${args.owner}/${args.repo}/pulls/${args.pull_number}`;
+      const pull_number = parseInt(args.pull_number, 10);
+      const endpoint = `repos/${args.owner}/${args.repo}/pulls/${pull_number}`;
       return callGitHubAPI(env, endpoint, "GET", null, {
         Accept: "application/vnd.github.v3.diff",
       });
@@ -33,9 +34,12 @@ export async function executeTool(name, args, env, chatId) {
     }
     case "createOrUpdateFile": {
       const endpoint = `repos/${args.owner}/${args.repo}/contents/${args.path}`;
-      const base64Content = btoa(
-        String.fromCharCode(...new TextEncoder().encode(args.content))
-      );
+      const bytes = new TextEncoder().encode(args.content);
+      let binary = "";
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64Content = btoa(binary);
       const body = {
         message: args.message,
         content: base64Content,
@@ -55,26 +59,31 @@ export async function executeTool(name, args, env, chatId) {
       return callGitHubAPI(env, endpoint, "POST", body);
     }
     case "mergePullRequest": {
-      const endpoint = `repos/${args.owner}/${args.repo}/pulls/${args.pull_number}/merge`;
+      const pull_number = parseInt(args.pull_number, 10);
+      const endpoint = `repos/${args.owner}/${args.repo}/pulls/${pull_number}/merge`;
       const body = {};
       if (args.commit_title) body.commit_title = args.commit_title;
       if (args.merge_method) body.merge_method = args.merge_method;
       return callGitHubAPI(env, endpoint, "PUT", body);
     }
     case "addLabels": {
-      const endpoint = `repos/${args.owner}/${args.repo}/issues/${args.issue_number}/labels`;
+      const issue_number = parseInt(args.issue_number, 10);
+      const endpoint = `repos/${args.owner}/${args.repo}/issues/${issue_number}/labels`;
       return callGitHubAPI(env, endpoint, "POST", { labels: args.labels });
     }
     case "assignUser": {
-      const endpoint = `repos/${args.owner}/${args.repo}/issues/${args.issue_number}/assignees`;
+      const issue_number = parseInt(args.issue_number, 10);
+      const endpoint = `repos/${args.owner}/${args.repo}/issues/${issue_number}/assignees`;
       return callGitHubAPI(env, endpoint, "POST", { assignees: args.assignees });
     }
     case "createIssueComment": {
-      const endpoint = `repos/${args.owner}/${args.repo}/issues/${args.issue_number}/comments`;
+      const issue_number = parseInt(args.issue_number, 10);
+      const endpoint = `repos/${args.owner}/${args.repo}/issues/${issue_number}/comments`;
       return callGitHubAPI(env, endpoint, "POST", { body: args.body });
     }
     case "updateIssueState": {
-      const endpoint = `repos/${args.owner}/${args.repo}/issues/${args.issue_number}`;
+      const issue_number = parseInt(args.issue_number, 10);
+      const endpoint = `repos/${args.owner}/${args.repo}/issues/${issue_number}`;
       const body = {};
       if (args.state) body.state = args.state;
       if (args.title) body.title = args.title;
@@ -82,7 +91,8 @@ export async function executeTool(name, args, env, chatId) {
       return callGitHubAPI(env, endpoint, "PATCH", body);
     }
     case "updatePRState": {
-      const endpoint = `repos/${args.owner}/${args.repo}/pulls/${args.pull_number}`;
+      const pull_number = parseInt(args.pull_number, 10);
+      const endpoint = `repos/${args.owner}/${args.repo}/pulls/${pull_number}`;
       const body = {};
       if (args.state) body.state = args.state;
       if (args.title) body.title = args.title;
