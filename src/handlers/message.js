@@ -69,7 +69,7 @@ export async function processMessage(message, env) {
     let iteration = 0;
     let finalGeminiText = null;
     const startTime = Date.now();
-    const EXECUTION_TIMEOUT = 20000;
+    const EXECUTION_TIMEOUT = 90000;
 
     const blacklistedModels = new Set();
     const blacklistedKeys = new Set();
