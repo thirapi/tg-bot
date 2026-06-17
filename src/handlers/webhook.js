@@ -28,7 +28,7 @@ export async function handleWebhook(request, env, ctx) {
       await sendTelegramMessage(
         env.TELEGRAM_BOT_TOKEN,
         chatId,
-        "Sabar ya, aku masih memproses permintaanmu sebelumnya! ⏳",
+        "Eh, sebentar ya! Aku masih proses yang tadi, tunggu bentar lagi ya.",
       );
       return new Response("OK", { status: 200 });
     }
@@ -53,20 +53,16 @@ export async function handleWebhook(request, env, ctx) {
       await sendTelegramMessage(
         env.TELEGRAM_BOT_TOKEN,
         chatId,
-        "Memori telah dibersihkan. Aku siap membantumu mengelola GitHub! 🚀",
+        "Oke, memorinya udah aku hapus ya. Sekarang kita mulai obrolan baru lagi, mau bahas apa nih?",
       );
       return new Response("OK", { status: 200 });
     }
     if (normalizedText === "/help") {
       const helpMsg =
-        "<b>Daftar Perintah:</b>\n" +
-        "/start - Memulai bot\n" +
-        "/reset - Menghapus riwayat\n" +
-        "/help  - Bantuan\n\n" +
-        "<b>Kemampuan Agentic:</b>\n" +
-        "📂 Kelola Issue GitHub\n" +
-        "🔍 Review Pull Request\n" +
-        "💬 Chat dengan Gemini 2.0";
+        "<b>Bisa apa aja?</b>\n" +
+        "/start atau /reset - Hapus memori biar kita mulai dari awal lagi\n" +
+        "/help - Lihat daftar ini\n\n" +
+        "Selain ngobrol santai, aku juga bisa bantu kamu cek issue di GitHub, review PR, atau liat-liat foto dan dengerin pesan suara kamu. Kasih tau aja ya!";
       await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, helpMsg);
       await env.CHAT_HISTORY.delete(lockKey);
       return new Response("OK", { status: 200 });

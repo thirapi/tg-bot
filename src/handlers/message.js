@@ -52,7 +52,7 @@ export async function processMessage(message, env) {
       await sendTelegramMessage(
         env.TELEGRAM_BOT_TOKEN,
         chatId,
-        "Maaf, aku bingung harus merespon apa. Coba kirim teks, foto, atau suara ya! 😅",
+        "Aduh, maaf ya, aku kurang ngerti maksudnya. Coba kirim teks, foto, atau suara gitu biar aku paham!",
       );
       return;
     }
@@ -79,7 +79,7 @@ export async function processMessage(message, env) {
 
       if (Date.now() - startTime > EXECUTION_TIMEOUT) {
         throw new Error(
-          "Waktu eksekusi hampir habis (Timeout). Mohon pecah permintaanmu menjadi lebih sederhana. ⏳",
+          "Duh, maaf ya, ini kayaknya kepanjangan deh prosesnya. Coba deh pecah pertanyaannya biar lebih simpel, nanti aku bantu lagi!",
         );
       }
 
@@ -204,7 +204,7 @@ export async function processMessage(message, env) {
       await sendTelegramMessage(
         env.TELEGRAM_BOT_TOKEN,
         chatId,
-        "Maaf, aku tidak bisa memberikan jawaban teks untuk permintaan itu, tapi aku sudah mencoba menjalankan instruksimu. Ada lagi yang bisa kubantu? 😊",
+        "Maaf ya, aku nggak bisa kasih jawaban teks buat yang ini, tapi tadi aku udah coba kok jalanin perintahnya. Ada hal lain yang mau dibahas?",
       );
     }
   } catch (err) {
@@ -212,7 +212,7 @@ export async function processMessage(message, env) {
     await sendTelegramMessage(
       env.TELEGRAM_BOT_TOKEN,
       chatId,
-      `Aduh, sepertinya ada gangguan teknis: ${err.message}. Coba lagi ya! 🙏`,
+      `Yah, kok ada error ya... ${err.message}. Coba kirim lagi ya, moga-moga habis ini lancar!`,
     );
   } finally {
     isProcessing = false;

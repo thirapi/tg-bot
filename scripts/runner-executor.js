@@ -54,7 +54,7 @@ function getFilesRecursively(dir) {
     if (stat && stat.isDirectory()) {
       results = results.concat(getFilesRecursively(filePath));
     } else {
-      if (/\.(js|ts|jsx|tsx|json|jsonc|css|scss|md)$/i.test(filePath)) {
+      if (/\.(js|ts)$/i.test(filePath)) {
         results.push(filePath);
       }
     }
@@ -63,68 +63,83 @@ function getFilesRecursively(dir) {
 }
 
 async function main() {
-  await sendTelegramUpdate(`🛠 **Bengkel Kerja Dimulai**\n\nRepo: \`${TARGET_REPO}\`\n\n*Instruksi:* ${INSTRUCTION}`);
+  await sendTelegramUpdate(`🛠 **Lagi dikerjain nih!**\n\nRepo: \`${TARGET_REPO}\`\n\n*Instruksi:* ${INSTRUCTION}`);
 
   try {
     const workDir = path.join(process.cwd(), 'target_workspace');
     const repoUrl = `https://x-access-token:${GLOBAL_WORKER_PAT}@github.com/${TARGET_REPO}.git`;
 
     console.log('Cloning...');
+    if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
     execSync(`git clone ${repoUrl} ${workDir}`);
     process.chdir(workDir);
 
-    execSync('git config user.name "Kokoa Bengkel Bot"');
+    execSync('git config user.name "Cocoa Bengkel Bot"');
     execSync('git config user.email "bot@kokoa.dev"');
 
     let iteration = 0;
     let buildStatus = { success: false, output: '' };
+    let lastError = '';
 
     while (iteration < MAX_ITERATIONS) {
       iteration++;
       console.log(`--- Iterasi ${iteration} ---`);
-      
-      await sendTelegramUpdate(`🔄 **Iterasi ${iteration}/${MAX_ITERATIONS}**: Mencoba melakukan build...`);
 
+      const shouldEditFirst = iteration === 1 && INSTRUCTION.toLowerCase() !== 'test build';
+      const isHealing = iteration > 1;
+
+      if (shouldEditFirst || isHealing) {
+        const fileContexts = [];
+        const files = getFilesRecursively('src');
+        for (const f of files) {
+          fileContexts.push({ path: f, content: fs.readFileSync(f, 'utf8') });
+        }
+
+        const statusMsg = isHealing ? `🔄 **Iterasi ${iteration}**: Bentar ya, aku coba benerin dulu errornya...` : `🎨 **Iterasi 1**: Aku terapin dulu ya instruksinya...`;
+        await sendTelegramUpdate(statusMsg);
+
+        const suggestion = await getFixSuggestion(INSTRUCTION, lastError, fileContexts);
+        await sendTelegramUpdate(`💡 **Saran dari aku**: ${suggestion.explanation}`);
+
+        for (const change of suggestion.changes) {
+          const fullPath = path.isAbsolute(change.path) ? change.path : path.join(process.cwd(), change.path);
+          fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+          fs.writeFileSync(fullPath, change.content);
+          console.log(`Updated: ${change.path}`);
+        }
+      }
+
+      await sendTelegramUpdate(`Lagi aku build dulu ya buat Iterasi ${iteration}...`);
       buildStatus = runCommand('npm install && npm run build');
 
       if (buildStatus.success) {
-        await sendTelegramUpdate(`✅ **Build Sukses!** pada iterasi ke-${iteration}.`);
+        await sendTelegramUpdate(`Hore! **Buildnya sukses** di iterasi ke-${iteration}.`);
         break;
-      }
-
-      await sendTelegramUpdate(`❌ **Build Gagal**. Menghubungi Gemini untuk mencari solusi...`);
-      
-      const fileContexts = [];
-      const files = getFilesRecursively('src');
-      for (const f of files) {
-        fileContexts.push({ path: f, content: fs.readFileSync(f, 'utf8') });
-      }
-
-      const suggestion = await getFixSuggestion(INSTRUCTION, buildStatus.output, fileContexts);
-      
-      await sendTelegramUpdate(`💡 **Saran Gemini**: ${suggestion.explanation}\n\nMenerapkan perubahan...`);
-
-      for (const change of suggestion.changes) {
-        fs.mkdirSync(path.dirname(change.path), { recursive: true });
-        fs.writeFileSync(change.path, change.content);
-        console.log(`Updated: ${change.path}`);
+      } else {
+        lastError = buildStatus.output;
+        console.error(`Build failed in iteration ${iteration}`);
+        await sendTelegramUpdate(`Duh, **buildnya gagal** nih di iterasi ${iteration}.`);
       }
     }
 
     if (buildStatus.success) {
       console.log('Pushing changes...');
       execSync('git add .');
-      execSync(`git commit -m "chore: auto-fix build based on Gemini suggestions\n\nOriginal Instruction: ${INSTRUCTION}"`);
-      execSync('git push origin main');
-
-      await sendTelegramUpdate(`🚀 **Tugas Selesai!** Perubahan telah di-push ke branch \`main\`.`);
+      const status = execSync('git status --porcelain', { encoding: 'utf8' });
+      if (status) {
+        execSync(`git commit -m "chore: auto-fix build based on Gemini suggestions\n\nOriginal Instruction: ${INSTRUCTION}"`);
+        execSync('git push origin main');
+        await sendTelegramUpdate(`Beres! Perubahan udah aku push ke branch \`main\` ya.`);
+      } else {
+        await sendTelegramUpdate(`Selesai! Kayaknya nggak ada yang perlu diubah deh.`);
+      }
     } else {
-      await sendTelegramUpdate(`⚠️ **Batas Iterasi Tercapai**. Build masih gagal setelah ${MAX_ITERATIONS} percobaan. Mohon periksa log secara manual.`);
+      await sendTelegramUpdate(`Aduh, udah ${MAX_ITERATIONS} kali coba tapi masih gagal. Maaf ya, aku nyerah dulu buat sekarang.`);
     }
 
   } catch (error) {
     console.error('Fatal Error:', error);
-    await sendTelegramUpdate(`🚨 **Fatal Error**: ${error.message}`);
+    await sendTelegramUpdate(`Waduh, ada masalah serius nih: ${error.message}`);
     process.exit(1);
   }
 }

@@ -10,7 +10,7 @@ const shuffle = (array) => {
 
 export async function getFixSuggestion(instruction, errorLog, fileContexts = []) {
   const keys = (process.env.GEMINI_API_KEYS || "").split(",").map(k => k.trim()).filter(k => k);
-  const models = (process.env.GEMINI_MODELS || "gemini-2.0-flash,gemini-1.5-flash").split(",").map(m => m.trim());
+  const models = (process.env.GEMINI_MODELS || "gemini-3.5-flash,gemini-3-flash-preview,gemini-3.1-flash-lite").split(",").map(m => m.trim());
   
   const prompt = `
 Kamu adalah Senior Software Engineer. Kamu sedang membantu memperbaiki error di lingkungan CI/CD (GitHub Actions).
@@ -52,7 +52,7 @@ JANGAN BERIKAN TEKS LAIN SELAIN JSON TERSEBUT.
     if (blacklistedModels.has(modelName)) continue;
 
     const availableKeys = keys.filter(k => !blacklistedKeys.has(k));
-    if (availableKeys.length === 0) break;
+    if (availableKeys.length === 0) continue;
 
     const shuffledKeys = shuffle([...availableKeys]);
 
@@ -63,7 +63,7 @@ JANGAN BERIKAN TEKS LAIN SELAIN JSON TERSEBUT.
         const result = await model.generateContent(prompt);
         const response = await result.response;
         const text = response.text();
-        const jsonStr = text.replace(/^```json/i, "").replace(/```$/i, "").trim();
+        const jsonStr = text.replace(/^```json/i, "").replace(/```$/, "").trim();
         return JSON.parse(jsonStr);
       } catch (error) {
         const msg = error.message || "";
@@ -77,9 +77,11 @@ JANGAN BERIKAN TEKS LAIN SELAIN JSON TERSEBUT.
           blacklistedModels.add(modelName);
           break;
         }
-        throw error;
+        console.error(`Unexpected error with ${modelName} and key ${key.substring(0, 6)}...: ${msg}`);
+        blacklistedKeys.add(key);
+        continue;
       }
     }
   }
-  throw new Error("Seluruh model dan kunci Gemini gagal merespon setelah dicoba.");
+  throw new Error("Seluruh model dan kunci Gemini gagal merespon setelah mencoba seluruh kombinasi.");
 }
