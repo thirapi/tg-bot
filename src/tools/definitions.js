@@ -334,7 +334,7 @@ export const githubTools = [
       },
       {
         name: "triggerDeveloperWorkflow",
-        description: "Memicu workflow pengembangan berat (bengkel kerja) di GitHub Actions untuk tugas seperti kloning repo, analisis file lokal mendalam, modifikasi kode masif, perbaikan error build/compile otomatis, hingga push dan PR. Gunakan ini jika tugas terlalu berat untuk dilakukan via API biasa atau terkena limitasi timeout.",
+        description: "Memicu workflow pengembangan berat di GitHub Actions untuk tugas seperti kloning repo, analisis file lokal mendalam, modifikasi kode masif, perbaikan error build/compile otomatis, hingga push dan PR. Gunakan ini jika tugas terlalu berat untuk dilakukan via API biasa atau terkena limitasi timeout.",
         parameters: {
           type: "OBJECT",
           properties: {

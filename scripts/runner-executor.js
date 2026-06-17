@@ -74,8 +74,8 @@ async function main() {
     execSync(`git clone ${repoUrl} ${workDir}`);
     process.chdir(workDir);
 
-    execSync('git config user.name "Cocoa Bengkel Bot"');
-    execSync('git config user.email "bot@kokoa.dev"');
+    execSync('git config user.name "ccocoa"');
+    execSync('git config user.email "270871570+ccocoa@users.noreply.github.com"');
 
     let iteration = 0;
     let buildStatus = { success: false, output: '' };

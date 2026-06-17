@@ -1,4 +1,4 @@
-name: Kokoa Dev Workflow (Bengkel Kerja)
+name: Kokoa Workflow
 
 on:
   repository_dispatch:

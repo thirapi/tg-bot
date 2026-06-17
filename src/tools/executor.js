@@ -129,7 +129,7 @@ export async function executeTool(name, args, env, chatId) {
       };
       await callGitHubAPI(env, endpoint, "POST", body);
       return {
-        message: "Workflow pengembangan berhasil dipicu di GitHub Actions (Bengkel Kerja). Proses ini akan berjalan di latar belakang (Ubuntu Runner). Aku akan memberikan notifikasi setelah tugas selesai atau jika ada perkembangan lebih lanjut.",
+        message: "Workflow pengembangan berhasil dipicu di GitHub Actions. Proses ini akan berjalan di latar belakang (Ubuntu Runner). Aku akan memberikan notifikasi setelah tugas selesai atau jika ada perkembangan lebih lanjut.",
       };
     }
     default:
