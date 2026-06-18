@@ -30,8 +30,7 @@ KONTEKS FILE SAAT INI:
 ${fileContexts.map(f => `File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``).join("\n\n")}
 
 ATURAN OUTPUT (WAJIB):
-Jawab HANYA dengan JSON murni tanpa teks tambahan apapun, tanpa markdown, tanpa \`\`\`json.
-Gunakan format berikut persis:
+Jawab HANYA dengan JSON murni menggunakan format berikut persis:
 
 {
   "explanation": "Penjelasan singkat tentang apa yang dilakukan",
@@ -65,6 +64,7 @@ Catatan: needsBuild = true jika perubahan mempengaruhi kode .js/.ts, package.jso
           generationConfig: {
             temperature: 0.1,
             maxOutputTokens: 8192,
+            responseMimeType: "application/json"
           }
         });
 
@@ -77,7 +77,17 @@ Catatan: needsBuild = true jika perubahan mempengaruhi kode .js/.ts, package.jso
           text = text.substring(firstBrace, lastBrace + 1);
         }
 
-        const parsed = JSON.parse(text);
+        text = text
+          .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
+          .replace(/\\x[0-9a-fA-F]{2}/g, "");
+
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch (e) {
+          text = text.replace(/\\([^\x22\x2F\x5C\x62\x66\x6E\x72\x74\x75])/g, "$1");
+          parsed = JSON.parse(text);
+        }
 
         if (!parsed.explanation || !Array.isArray(parsed.changes)) {
           throw new Error("JSON format tidak sesuai");

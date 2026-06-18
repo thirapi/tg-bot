@@ -108,10 +108,12 @@ async function main() {
         await sendTelegramUpdate(`💡 **Saran dari aku**: ${suggestion.explanation}`);
 
         for (const change of suggestion.changes) {
-          const fullPath = path.isAbsolute(change.path) ? change.path : path.join(process.cwd(), change.path);
+          const safeRelativePath = path.normalize(change.path).replace(/^(\.\.(\/|\\|$))+/, '');
+          const fullPath = path.join(process.cwd(), safeRelativePath);
+
           fs.mkdirSync(path.dirname(fullPath), { recursive: true });
           fs.writeFileSync(fullPath, change.content, 'utf8');
-          console.log(`Updated: ${change.path}`);
+          console.log(`Updated: ${safeRelativePath}`);
         }
       }
 
