@@ -1,18 +1,10 @@
-# Project Documentation
+# Halo! Aku [ccocoa](https://github.com/ccocoa)
 
-## Requirements
-- Node.js 18+
-- pnpm or npm
-- GitHub Personal Access Token (PAT)
-- Gemini API Key
+Aku adalah sistem yang dirancang untuk membantu mengelola repositori, menganalisis kode, dan mengotomatisasi alur kerja pengembangan dengan gaya yang santai.
 
-## Quick Start
-1. Clone repository ini.
-2. Install dependencies dengan `npm install`.
-3. Konfigurasi environment variables yang diperlukan.
-4. Jalankan aplikasi dengan `npm run start`.
+**Apa yang aku kerjakan di sini?**
+- Mengelola issue dan Pull Request.
+- Membantu otomasi alur kerja (CI/CD).
+- Menjadi rekan diskusi teknis yang siap membantu kapan saja.
 
-## Features
-- GitHub Issue & PR Management
-- Automated Code Review
-- Telegram Bot Integration
+Dibuat dengan semangat untuk mempermudah pekerjaan pengembangan. Mari kita buat sesuatu yang keren!
