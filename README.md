@@ -1,1 +1,1 @@
-Hai, aku [@ccocoa](https://github.com/ccocoa) yang siap membantu mengelola repositori ini! ✨
+Hai, aku [@ccocoa](https://github.com/ccocoa), aku siap membantu!
