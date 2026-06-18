@@ -32,14 +32,12 @@ async function sendTelegramUpdate(message) {
 
 function runCommand(command) {
   try {
-    return {
-      success: true,
-      output: execSync(command, { encoding: 'utf8', stdio: 'pipe' })
-    };
+    const output = execSync(command, { encoding: 'utf8', stdio: 'pipe' });
+    return { success: true, output };
   } catch (error) {
     return {
       success: false,
-      output: error.stdout + error.stderr
+      output: error.stdout + '\n' + error.stderr
     };
   }
 }
@@ -90,8 +88,11 @@ async function main() {
 
       if (shouldEditFirst || isHealing) {
         const fileContexts = [];
-        const files = getFilesRecursively('src');
-        for (const f of files) {
+        const srcFiles = getFilesRecursively('src');
+        const rootFiles = getFilesRecursively('.');
+        const allFiles = [...new Set([...srcFiles, ...rootFiles])];
+
+        for (const f of allFiles) {
           fileContexts.push({ path: f, content: fs.readFileSync(f, 'utf8') });
         }
 
@@ -104,7 +105,7 @@ async function main() {
         for (const change of suggestion.changes) {
           const fullPath = path.isAbsolute(change.path) ? change.path : path.join(process.cwd(), change.path);
           fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-          fs.writeFileSync(fullPath, change.content);
+          fs.writeFileSync(fullPath, change.content, 'utf8');
           console.log(`Updated: ${change.path}`);
         }
       }
@@ -118,7 +119,7 @@ async function main() {
       } else {
         lastError = buildStatus.output;
         console.error(`Build failed in iteration ${iteration}`);
-        await sendTelegramUpdate(`Duh, **buildnya gagal** nih di iterasi ${iteration}.`);
+        await sendTelegramUpdate(`Duh, **buildnya gagal** di iterasi ${iteration}.\n\nError:\n\`\`\`\n${lastError.substring(0, 1500)}\n\`\`\``);
       }
     }
 
@@ -126,7 +127,7 @@ async function main() {
       console.log('Pushing changes...');
       execSync('git add .');
       const status = execSync('git status --porcelain', { encoding: 'utf8' });
-      if (status) {
+      if (status.trim()) {
         execSync(`git commit -m "chore: auto-fix build based on Gemini suggestions\n\nOriginal Instruction: ${INSTRUCTION}"`);
         execSync('git push origin main');
         await sendTelegramUpdate(`Beres! Perubahan udah aku push ke branch \`main\` ya.`);
