@@ -65,3 +65,86 @@ export async function fetchGeminiGenerate(model, key, contents, env) {
     throw err;
   }
 }
+
+export async function checkGeminiQuota(env) {
+  const keys = (env.GEMINI_API_KEYS || "").split(",").map((k) => k.trim()).filter(Boolean);
+  const models = (env.GEMINI_MODELS || "gemini-2.0-flash-exp,gemini-1.5-flash")
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
+
+  const results = [];
+
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    // Masking logic
+    let maskedKey = "Invalid Key";
+    if (key.length > 10) {
+      maskedKey = `${key.slice(0, 6)}...${key.slice(-4)}`;
+    } else {
+      maskedKey = `${key.slice(0, 2)}...`;
+    }
+
+    const modelResults = [];
+
+    for (const model of models) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+      const payload = {
+        contents: [{ role: "user", parts: [{ text: "ping" }] }],
+        generationConfig: { maxOutputTokens: 1 },
+      };
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          modelResults.push({ model, status: "✅ ACTIVE" });
+        } else {
+          let statusText = `⚠️ ERROR [HTTP ${response.status}]`;
+          if (response.status === 429) {
+            statusText = "❌ RATELIMIT (429)";
+          } else {
+            try {
+              const errorData = await response.json();
+              const errorMessage = errorData.error?.message || "Unknown Error";
+              statusText = `⚠️ ERROR [${errorMessage}]`;
+            } catch (_) {
+              const errorText = await response.text();
+              statusText = `⚠️ ERROR [${errorText.slice(0, 50)}]`;
+            }
+          }
+          modelResults.push({ model, status: statusText });
+        }
+      } catch (err) {
+        clearTimeout(timeoutId);
+        const statusText = err.name === "AbortError" ? "⏳ TIMEOUT" : `⚠️ ERROR [${err.message}]`;
+        modelResults.push({ model, status: statusText });
+      }
+    }
+
+    results.push({ index: i + 1, maskedKey, modelResults });
+  }
+
+  // Format Output
+  let outputText = "<b>Status API Key & Model Gemini</b>\n\n";
+  for (const res of results) {
+    outputText += `🔑 Key ${res.index} (${res.maskedKey})\n`;
+    res.modelResults.forEach((mRes, idx) => {
+      const isLast = idx === res.modelResults.length - 1;
+      const prefix = isLast ? "└─ " : "├─ ";
+      outputText += `${prefix}<code>${mRes.model}</code>: ${mRes.status}\n`;
+    });
+    outputText += "\n";
+  }
+
+  return outputText.trim();
+}

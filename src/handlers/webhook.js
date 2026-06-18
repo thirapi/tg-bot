@@ -1,6 +1,7 @@
 import { RATE_LIMIT_SECONDS } from "../config.js";
 import { sendTelegramMessage } from "../services/telegram.js";
 import { processMessage } from "./message.js";
+import { checkGeminiQuota } from "../services/gemini.js";
 
 export async function handleWebhook(request, env, ctx) {
   if (request.method !== "POST") {
@@ -84,9 +85,26 @@ export async function handleWebhook(request, env, ctx) {
           const helpMsg =
             "<b>Bisa apa aja?</b>\n" +
             "/start atau /reset - Hapus memori biar kita mulai dari awal lagi\n" +
-            "/help - Lihat daftar ini\n\n" +
+            "/help - Lihat daftar ini\n" +
+            "/quota atau /keys - Cek sisa kuota dan status API Key\n\n" +
             "Selain ngobrol santai, aku juga bisa bantu kamu cek issue di GitHub, review PR, atau liat-liat foto dan dengerin pesan suara kamu. Kasih tau aja ya!";
           await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, helpMsg);
+        } finally {
+          await env.CHAT_HISTORY.delete(lockKey).catch(() => {});
+        }
+      })());
+      return new Response("OK", { status: 200 });
+    }
+
+    if (normalizedText === "/quota" || normalizedText === "/keys") {
+      ctx.waitUntil((async () => {
+        try {
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Sip, tunggu bentar ya! Aku cek dulu status semua API Key dan modelnya...");
+          const quotaStatus = await checkGeminiQuota(env);
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, quotaStatus);
+        } catch (err) {
+          console.error("Quota Check Error:", err);
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Aduh, ada error pas lagi cek quota. Coba lagi nanti ya!");
         } finally {
           await env.CHAT_HISTORY.delete(lockKey).catch(() => {});
         }
