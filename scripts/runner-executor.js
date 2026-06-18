@@ -139,7 +139,7 @@ async function main() {
       execSync('git add .');
       const status = execSync('git status --porcelain', { encoding: 'utf8' });
       if (status.trim()) {
-        const commitMsg = `feat: auto-fix instruction applied\n\n- Applied changes based on: ${INSTRUCTION}\n- Status: Build successful`;
+        const commitMsg = `feat: auto-fix instruction applied\n\n- Applied changes based on: ${INSTRUCTION}\n- Status: Build successful\n\nCo-authored-by: thirapi <132630759+thirapi@users.noreply.github.com>`;
         execFileSync('git', ['commit', '-m', commitMsg]);
         execSync('git push origin main');
         await sendTelegramUpdate(`Beres! Perubahan udah aku push ke branch \`main\` ya.`);
