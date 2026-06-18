@@ -61,7 +61,7 @@ export async function processMessage(message, env) {
     }
 
     const keys = env.GEMINI_API_KEYS.split(",").map((k) => k.trim());
-    const models = (env.GEMINI_MODELS || "gemini-3.5-flash,gemini-3-flash-preview,gemini-3.1-flash-lite")
+    const models = (env.GEMINI_MODELS || "gemini-3.1-flash-lite,gemini-3.5-flash,gemini-3-flash-preview")
       .split(",")
       .map((m) => m.trim());
 
@@ -72,7 +72,7 @@ export async function processMessage(message, env) {
     let iteration = 0;
     let finalGeminiText = null;
     const startTime = Date.now();
-    const EXECUTION_TIMEOUT = 25000;
+    const EXECUTION_TIMEOUT = 23000;
 
     const blacklistedModels = new Set();
     const blacklistedKeysGlobal = new Set();
@@ -109,6 +109,8 @@ export async function processMessage(message, env) {
       }
 
       outerLoop: for (const model of activeModels) {
+        if (Date.now() - startTime > EXECUTION_TIMEOUT) break outerLoop;
+
         const availableKeys = [];
         for (const key of keys) {
           const isLocallyDown = blacklistedKeysPerModel.has(`${model}:${key}`);
@@ -126,7 +128,15 @@ export async function processMessage(message, env) {
           continue;
         }
 
+        let consecutiveFailures = 0;
+        const MAX_FAILURES_BEFORE_SKIP = 2;
+
         for (const key of shuffledKeys) {
+          if (Date.now() - startTime > EXECUTION_TIMEOUT) {
+            console.warn(`[Timeout] Batas waktu tercapai sebelum mencoba key berikutnya pada model ${model}.`);
+            break outerLoop;
+          }
+
           const keyShort = key.slice(-6);
           try {
             geminiResponse = await fetchGeminiGenerate(
@@ -140,19 +150,23 @@ export async function processMessage(message, env) {
             console.error(`Error dengan model ${model} [Key: ${keyShort}...]:`, err.message);
             lastError = err;
 
-            if (err.message.includes("GEMINI_RETRY_TRIGGER")) {
+            if (err.message.includes("GEMINI_RETRY_TRIGGER") || err.message.includes("429") || err.message.includes("503")) {
               console.warn(`[Cooldown Triggered] Key ${keyShort} limit/timeout di model ${model}.`);
 
               blacklistedKeysPerModel.add(`${model}:${key}`);
+              consecutiveFailures++;
+
+              if (consecutiveFailures >= MAX_FAILURES_BEFORE_SKIP) {
+                console.warn(`[Skip Model] ${model} gagal ${consecutiveFailures}x berturut-turut, lanjut ke model berikutnya.`);
+                break;
+              }
 
               continue;
             }
 
             if (err.message.includes("GEMINI_KEY_INVALID") || err.message.includes("GEMINI_KEY_BLOCKED")) {
               console.warn(`[Key Blocked] Key ${keyShort} tidak valid atau diblokir.`);
-
               blacklistedKeysGlobal.add(key);
-
               await env.CHAT_HISTORY.put(`cooldown:${keyShort}`, "1", { expirationTtl: 600 });
               continue;
             }
@@ -167,7 +181,7 @@ export async function processMessage(message, env) {
       }
 
       if (!geminiResponse) {
-        throw lastError || new Error("Semua Gemini API endpoint gagal merespon.");
+        throw lastError || new Error("Semua Gemini API endpoint gagal merespon atau kehabisan waktu eksekusi.");
       }
 
       const candidate = geminiResponse.candidates?.[0];
