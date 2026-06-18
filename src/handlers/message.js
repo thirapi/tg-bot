@@ -58,7 +58,7 @@ export async function processMessage(message, env) {
     }
 
     const keys = env.GEMINI_API_KEYS.split(",").map((k) => k.trim());
-    const models = (env.GEMINI_MODELS || "gemini-2.0-flash-exp,gemini-1.5-flash")
+    const models = (env.GEMINI_MODELS || "gemini-3.5-flash,gemini-3-flash-preview,gemini-3.1-flash-lite")
       .split(",")
       .map((m) => m.trim());
 
