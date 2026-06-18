@@ -69,17 +69,29 @@ export async function processMessage(message, env) {
     let iteration = 0;
     let finalGeminiText = null;
     const startTime = Date.now();
-    const EXECUTION_TIMEOUT = 90000;
+    const EXECUTION_TIMEOUT = 25000;
 
     const blacklistedModels = new Set();
+    const blacklistedKeysGlobal = new Set();
     const blacklistedKeysPerModel = new Set();
+
+    const cooldownStatuses = await Promise.all(
+      keys.map(async (key) => {
+        const keyShort = key.slice(-6);
+        const isGloballyDown = await env.CHAT_HISTORY.get(`cooldown:${keyShort}`);
+        return { key, isGloballyDown: !!isGloballyDown };
+      })
+    );
+    const kvCooldownedKeys = new Set(
+      cooldownStatuses.filter(item => item.isGloballyDown).map(item => item.key)
+    );
 
     while (iteration < MAX_AGENT_ITERATIONS) {
       iteration++;
 
       if (Date.now() - startTime > EXECUTION_TIMEOUT) {
         throw new Error(
-          "Duh, maaf ya, ini kayaknya kepanjangan deh prosesnya. Coba deh pecah pertanyaannya biar lebih simpel, nanti aku bantu lagi!",
+          "Duh, maaf ya, prosesnya terlalu lama dan hampir melebihi limit Cloudflare Workers. Coba pecah pertanyaannya biar lebih simpel ya!",
         );
       }
 
@@ -96,17 +108,16 @@ export async function processMessage(message, env) {
       outerLoop: for (const model of activeModels) {
         const availableKeys = [];
         for (const key of keys) {
-          const keyShort = key.slice(-6);
           const isLocallyDown = blacklistedKeysPerModel.has(`${model}:${key}`);
-          const isGloballyDown = await env.CHAT_HISTORY.get(`cooldown:${keyShort}`);
-          
+          const isGloballyDown = blacklistedKeysGlobal.has(key) || kvCooldownedKeys.has(key);
+
           if (!isLocallyDown && !isGloballyDown) {
             availableKeys.push(key);
           }
         }
 
         const shuffledKeys = shuffleArray(availableKeys);
-        
+
         if (shuffledKeys.length === 0) {
           console.warn(`Semua API Key untuk model ${model} sudah dicoba dan gagal/limit.`);
           continue;
@@ -128,15 +139,25 @@ export async function processMessage(message, env) {
 
             if (err.message.includes("GEMINI_RETRY_TRIGGER")) {
               console.warn(`[Cooldown Triggered] Key ${keyShort} limit/timeout di model ${model}.`);
-              
+
+              blacklistedKeysGlobal.add(key);
               blacklistedKeysPerModel.add(`${model}:${key}`);
-              
+
               await env.CHAT_HISTORY.put(`cooldown:${keyShort}`, "1", { expirationTtl: 300 });
               continue;
             }
 
-            if (err.message.includes("404") || err.message.includes("400")) {
-              console.warn(`Model ${model} dimasukkan ke blacklist sesi karena error fatal.`);
+            if (err.message.includes("GEMINI_KEY_INVALID") || err.message.includes("GEMINI_KEY_BLOCKED")) {
+              console.warn(`[Key Blocked] Key ${keyShort} tidak valid atau diblokir.`);
+
+              blacklistedKeysGlobal.add(key);
+
+              await env.CHAT_HISTORY.put(`cooldown:${keyShort}`, "1", { expirationTtl: 600 });
+              continue;
+            }
+
+            if (err.message.includes("GEMINI_MODEL_NOT_FOUND") || err.message.includes("404")) {
+              console.warn(`Model ${model} dimasukkan ke blacklist sesi karena tidak ditemukan.`);
               blacklistedModels.add(model);
               break;
             }

@@ -57,7 +57,7 @@ export async function handleWebhook(request, env, ctx) {
     await Promise.all([
       env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 }),
       env.CHAT_HISTORY.put(rateLimitKey, String(now), { expirationTtl: 60 }),
-      env.CHAT_HISTORY.put(lockKey, "1", { expirationTtl: 100 })
+      env.CHAT_HISTORY.put(lockKey, "1", { expirationTtl: 60 })
     ]);
 
     const text = message.text || message.caption || "";

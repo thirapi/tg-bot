@@ -1,3 +1,5 @@
+import { bufferToBase64 } from "../utils/array.js";
+
 export async function prepareMediaPart(token, fileId, mimeType) {
   const getFileUrl = `https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`;
   const fileRes = await fetch(getFileUrl);
@@ -13,12 +15,7 @@ export async function prepareMediaPart(token, fileId, mimeType) {
     return null;
   }
   const buffer = await mediaRes.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  const base64 = btoa(binary);
+  const base64 = bufferToBase64(buffer);
   return {
     inline_data: {
       mime_type: mimeType,

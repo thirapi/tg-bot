@@ -1,4 +1,5 @@
 import { callGitHubAPI } from "../services/github.js";
+import { bufferToBase64 } from "../utils/array.js";
 
 export async function executeTool(name, args, env, chatId) {
   switch (name) {
@@ -35,11 +36,7 @@ export async function executeTool(name, args, env, chatId) {
     case "createOrUpdateFile": {
       const endpoint = `repos/${args.owner}/${args.repo}/contents/${args.path}`;
       const bytes = new TextEncoder().encode(args.content);
-      let binary = "";
-      for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const base64Content = btoa(binary);
+      const base64Content = bufferToBase64(bytes);
       const body = {
         message: args.message,
         content: base64Content,
