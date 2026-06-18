@@ -96,6 +96,27 @@ export async function handleWebhook(request, env, ctx) {
       return new Response("OK", { status: 200 });
     }
 
+    if (normalizedText === "/unblock") {
+      ctx.waitUntil((async () => {
+        try {
+          const keys = (env.GEMINI_API_KEYS || "").split(",").map((k) => k.trim()).filter(Boolean);
+          const deletePromises = keys.map(key => env.CHAT_HISTORY.delete(`cooldown:${key.slice(-6)}`));
+          await Promise.all(deletePromises);
+          await sendTelegramMessage(
+            env.TELEGRAM_BOT_TOKEN,
+            chatId,
+            "✅ Semua status blacklist/cooldown API Key di memori sistem (KV) telah dihapus! Bot akan mencoba menggunakan semua key dari awal lagi.",
+          );
+        } catch (err) {
+          console.error("Unblock Error:", err);
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Aduh, gagal reset blacklist nih.");
+        } finally {
+          await env.CHAT_HISTORY.delete(lockKey).catch(() => {});
+        }
+      })());
+      return new Response("OK", { status: 200 });
+    }
+
     if (normalizedText === "/quota" || normalizedText === "/keys") {
       ctx.waitUntil((async () => {
         try {

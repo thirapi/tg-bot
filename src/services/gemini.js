@@ -82,7 +82,9 @@ export async function checkGeminiQuota(env) {
     .map((m) => m.trim())
     .filter(Boolean);
 
-  const results = await Promise.all(keys.map(async (key, i) => {
+  const results = [];
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
     let maskedKey = "Invalid Key";
     if (key.length > 10) {
       maskedKey = `${key.slice(0, 6)}...${key.slice(-4)}`;
@@ -98,7 +100,7 @@ export async function checkGeminiQuota(env) {
       };
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
 
       try {
         const response = await fetch(url, {
@@ -134,8 +136,8 @@ export async function checkGeminiQuota(env) {
       }
     }));
 
-    return { index: i + 1, maskedKey, modelResults };
-  }));
+    results.push({ index: i + 1, maskedKey, modelResults });
+  }
 
   let outputText = "<b>Status API Key & Model Gemini</b>\n\n";
   for (const res of results) {

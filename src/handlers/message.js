@@ -140,10 +140,8 @@ export async function processMessage(message, env) {
             if (err.message.includes("GEMINI_RETRY_TRIGGER")) {
               console.warn(`[Cooldown Triggered] Key ${keyShort} limit/timeout di model ${model}.`);
 
-              blacklistedKeysGlobal.add(key);
               blacklistedKeysPerModel.add(`${model}:${key}`);
 
-              await env.CHAT_HISTORY.put(`cooldown:${keyShort}`, "1", { expirationTtl: 300 });
               continue;
             }
 
