@@ -82,17 +82,43 @@ export async function checkGeminiQuota(env) {
     .map((m) => m.trim())
     .filter(Boolean);
 
-  const results = [];
-  for (let i = 0; i < keys.length; i++) {
-    const key = keys[i];
+  const resultsMap = new Map();
+  keys.forEach((key, i) => {
     let maskedKey = "Invalid Key";
     if (key.length > 10) {
       maskedKey = `${key.slice(0, 6)}...${key.slice(-4)}`;
     } else {
       maskedKey = `${key.slice(0, 2)}...`;
     }
+    resultsMap.set(key, { index: i + 1, maskedKey, modelResults: [] });
+  });
 
-    const modelResults = await Promise.all(models.map(async (model) => {
+  const tasks = [];
+  keys.forEach((key) => {
+    models.forEach((model) => {
+      tasks.push({ key, model });
+    });
+  });
+
+  const CONCURRENCY_LIMIT = 5;
+  const GLOBAL_TIMEOUT = 25000;
+  const startTime = Date.now();
+
+  for (let i = 0; i < tasks.length; i += CONCURRENCY_LIMIT) {
+    const chunk = tasks.slice(i, i + CONCURRENCY_LIMIT);
+
+    if (Date.now() - startTime > GLOBAL_TIMEOUT) {
+      chunk.forEach(task => {
+        resultsMap.get(task.key).modelResults.push({
+          model: task.model,
+          status: "⏳ SKIPPED (Max Timeout Reached)"
+        });
+      });
+      continue;
+    }
+
+    await Promise.all(chunk.map(async (task) => {
+      const { key, model } = task;
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
       const payload = {
         contents: [{ role: "user", parts: [{ text: "ping" }] }],
@@ -100,7 +126,7 @@ export async function checkGeminiQuota(env) {
       };
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
 
       try {
         const response = await fetch(url, {
@@ -111,10 +137,11 @@ export async function checkGeminiQuota(env) {
         });
         clearTimeout(timeoutId);
 
+        let statusText;
         if (response.ok) {
-          return { model, status: "✅ ACTIVE" };
+          statusText = "✅ ACTIVE";
         } else {
-          let statusText = `⚠️ ERROR [HTTP ${response.status}]`;
+          statusText = `⚠️ ERROR [HTTP ${response.status}]`;
           if (response.status === 429) {
             statusText = "❌ RATELIMIT (429)";
           } else {
@@ -127,17 +154,17 @@ export async function checkGeminiQuota(env) {
               statusText = `⚠️ ERROR [${errorText.slice(0, 50)}]`;
             }
           }
-          return { model, status: statusText };
         }
+        resultsMap.get(key).modelResults.push({ model, status: statusText });
       } catch (err) {
         clearTimeout(timeoutId);
-        const statusText = err.name === "AbortError" ? "⏳ TIMEOUT" : `⚠️ ERROR [${err.message}]`;
-        return { model, status: statusText };
+        const statusText = err.name === "AbortError" ? "⏳ TIMEOUT (6s)" : `⚠️ ERROR [${err.message}]`;
+        resultsMap.get(key).modelResults.push({ model, status: statusText });
       }
     }));
-
-    results.push({ index: i + 1, maskedKey, modelResults });
   }
+
+  const results = Array.from(resultsMap.values());
 
   let outputText = "<b>Status API Key & Model Gemini</b>\n\n";
   for (const res of results) {

@@ -9,9 +9,17 @@ Dokumen ini berisi analisis detail mengenai fitur-fitur yang dimiliki oleh Gemin
 Bot ini berjalan di platform **Cloudflare Workers** (tanpa server VPS/Docker tradisional) dengan memori penyimpanan sementara/status obrolan menggunakan **Cloudflare KV (CHAT_HISTORY)**.
 
 ### Alur Kerja Utama:
-1. **Webhook Fast-Path:** Menerima pesan dari Telegram Webhook, memeriksa otorisasi pengirim, menyimpan status `lock` obrolan di KV, lalu langsung mengembalikan respons `200 OK` ke Telegram.
+1. **Webhook Fast-Path:** Menerima pesan dari Telegram Webhook, memeriksa otorisasi pengirim, memproses command langsung, lalu mengembalikan respons `200 OK` ke Telegram.
 2. **Pemrosesan Asinkron (`ctx.waitUntil`):** Logika pemrosesan pesan utama dijalankan di latar belakang agar webhook tidak mengalami timeout.
 3. **Agentic Tool Calling (Gemini):** Bot memanggil Gemini API dengan membawa sekumpulan perkakas (tools) GitHub. Gemini dapat memutuskan untuk memanggil tools ini secara berulang hingga target/jawaban tercapai sebelum memberikan teks final ke pengguna.
+
+### Batasan Cloudflare Workers Free Tier:
+| Batasan | Nilai |
+| :--- | :--- |
+| Wall-clock time (maks. eksekusi per request) | **30 detik** |
+| CPU time (maks. komputasi per request) | **10 ms** |
+| Koneksi keluar bersamaan per host | **6 koneksi** |
+| Cloudflare KV write consistency | **Eventually consistent** (bisa 60 detik) |
 
 ---
 
@@ -29,7 +37,8 @@ Bot ini berjalan di platform **Cloudflare Workers** (tanpa server VPS/Docker tra
 *   **Detail Implementasi:**
     *   File media diunduh dari server Telegram menggunakan API `getFile` dan token bot.
     *   Media dikonversi ke format Base64 dan dikirimkan sebagai bagian dari `inline_data` di payload Gemini API.
-    *   Telah dioptimalkan menggunakan fungsi **`bufferToBase64`** berbasis chunking untuk menghindari kelelahan CPU (CPU limit exceeded) pada Cloudflare Workers.
+    *   Telah dioptimalkan menggunakan fungsi **`bufferToBase64`** berbasis chunking untuk menghindari kelelahan CPU.
+    *   Proses download file diberi timeout (5 detik untuk `getFile`, 10 detik untuk download konten).
 
 ### C. Integrasi GitHub API (Agentic Tools)
 *   **Deskripsi:** Bot bertindak sebagai agen pengembang yang dapat mengelola repositori GitHub pengguna secara remote.
@@ -38,17 +47,32 @@ Bot ini berjalan di platform **Cloudflare Workers** (tanpa server VPS/Docker tra
     *   **Pull Requests (PR):** `getPRDiff`, `createPullRequest`, `mergePullRequest`, `updatePRState`.
     *   **File Manager:** `getFileContent`, `createOrUpdateFile`, `deleteFile`, `listDirectoryContents`.
     *   **Search & Workflow:** `searchInFiles`, `triggerDeveloperWorkflow` (memicu GitHub Actions runner untuk tugas berat di backend).
+*   **Timeout:** Semua panggilan ke GitHub API memiliki timeout 15 detik via `AbortController`.
 
 ### D. Manajemen Rotasi API Key & Model (Key & Model Rolling)
 *   **Deskripsi:** Bot membawa beberapa API Key Gemini (`GEMINI_API_KEYS`) dan beberapa model fallback (`GEMINI_MODELS`). Jika salah satu key mengalami limit/error, bot otomatis berputar mencari key/model yang aktif.
 *   **Detail Implementasi:**
-    *   Membawa set memori lokal `blacklistedKeysGlobal` untuk memblokir key yang rusak/limit secara instan di dalam satu siklus request.
-    *   Menyimpan status cooldown key ke Cloudflare KV (`cooldown:keyShort`) selama 5 menit (untuk rate limit) atau 10 menit (untuk bad/invalid key) agar request berikutnya langsung melewati key bermasalah tersebut.
+    *   **`blacklistedKeysPerModel`** — Menonaktifkan key hanya untuk model tertentu. Digunakan saat terjadi rate limit (429) atau server sibuk (503). Key tetap bisa digunakan untuk model fallback lain.
+    *   **`blacklistedKeysGlobal`** — Menonaktifkan key untuk semua model. Digunakan saat API key tidak valid (400) atau diblokir (403).
+    *   **Cooldown di KV** — Menyimpan status cooldown key ke Cloudflare KV (`cooldown:keyShort`) selama 10 menit untuk key invalid/blocked, agar request dari invokasi Worker berikutnya langsung melewati key bermasalah.
+    *   **Pre-fetch KV** — Status cooldown semua key dibaca secara paralel (`Promise.all`) di awal fungsi `processMessage` untuk menghindari pembacaan KV sekuensial di dalam loop.
 
 ### E. Pengecekan Kuota Key & Model (/quota)
 *   **Deskripsi:** Perintah `/quota` atau `/keys` untuk mengetahui status keaktifan masing-masing API Key terhadap setiap model terdaftar.
 *   **Detail Implementasi:**
-    *   Melakukan ping request dengan `maxOutputTokens: 1` secara paralel (`Promise.all`) untuk memangkas waktu respons dari belasan detik menjadi di bawah 2 detik.
+    *   Menggunakan sistem **chunked concurrency** — mengirim maksimal 5 request bersamaan agar tidak melebihi batas koneksi Cloudflare (6 per host).
+    *   Memiliki **Global Timeout 25 detik** — jika proses keseluruhan sudah mendekati batas waktu Worker, sisa pengecekan akan ditandai `⏳ SKIPPED` dan hasil yang sudah terkumpul langsung dikirim.
+
+### F. Perintah Bot (Commands)
+
+| Perintah | Deskripsi |
+| :--- | :--- |
+| `/start` atau `/reset` | Menghapus riwayat obrolan dan lock pemrosesan. |
+| `/help` | Menampilkan daftar perintah yang tersedia. |
+| `/unblock` | Menghapus semua status blacklist/cooldown API Key dan lock pemrosesan dari KV. Gunakan ini jika bot terasa "stuck" dan tidak merespons. |
+| `/quota` atau `/keys` | Mengecek status keaktifan API Key dan model Gemini secara real-time. |
+
+> **Penting:** Semua perintah di atas dieksekusi **sebelum** pengecekan lock pemrosesan, sehingga Anda selalu bisa mengirim `/unblock` atau `/reset` meskipun bot sedang dalam kondisi terkunci/stuck.
 
 ---
 
@@ -56,50 +80,66 @@ Bot ini berjalan di platform **Cloudflare Workers** (tanpa server VPS/Docker tra
 
 Berikut adalah rincian masalah teknis yang ditemukan dalam analisis mendalam dan solusi yang telah diimplementasikan ke dalam kode:
 
-### 1. Bug Kritis Blacklist Model Akibat API Key Bermasalah (Telah Diperbaiki)
-*   **Masalah:** Sebelumnya, jika salah satu API Key Anda tidak valid atau dinonaktifkan (menghasilkan error HTTP 400 `API_KEY_INVALID`), kode akan mendeteksi string `"400"` dan langsung mem-blacklist **seluruh model** (misalnya menonaktifkan `gemini-3.5-flash` sepenuhnya untuk sesi tersebut).
+### 3.1 Bug Kritis: Blacklist Model Akibat API Key Bermasalah
+*   **Masalah:** Jika salah satu API Key tidak valid (HTTP 400 `API_KEY_INVALID`), kode mendeteksi string `"400"` dan langsung mem-blacklist **seluruh model** (menonaktifkan `gemini-3.5-flash` sepenuhnya untuk sesi tersebut), padahal modelnya sendiri tidak bermasalah.
 *   **Solusi:** Memisahkan deteksi error secara terperinci di `fetchGeminiGenerate`:
-    *   Error status 400 dengan pesan invalid key dilempar sebagai `GEMINI_KEY_INVALID`.
-    *   Error status 403 dilempar sebagai `GEMINI_KEY_BLOCKED`.
-    *   Error status 404 dilempar sebagai `GEMINI_MODEL_NOT_FOUND`.
-    *   Di bagian loop penangkap error, error terkait key hanya akan menonaktifkan key tersebut (masuk cooldown), sedangkan model hanya akan dinonaktifkan jika terjadi error `GEMINI_MODEL_NOT_FOUND`.
+    *   Error `GEMINI_KEY_INVALID` (400) dan `GEMINI_KEY_BLOCKED` (403) → hanya menonaktifkan **key** tersebut secara global.
+    *   Error `GEMINI_MODEL_NOT_FOUND` (404) → hanya menonaktifkan **model** tersebut.
+    *   Error `GEMINI_RETRY_TRIGGER` (429/503) → hanya menonaktifkan **key untuk model tertentu** (per-model blacklist), sehingga key masih bisa dicoba pada model fallback.
 
-### 2. Bottleneck Latensi KV pada Loop Key Rolling (Telah Diperbaiki)
-*   **Masalah:** Sebelumnya, bot membaca status cooldown KV secara sekuensial untuk setiap key di dalam loop pencarian model. Jika ada 5 key dan 3 model, bot berpotensi melakukan hingga 15 operasi pembacaan KV berurutan yang sangat membebani latensi.
-*   **Solusi:** Di awal fungsi `processMessage`, seluruh status cooldown dari semua key dibaca secara paralel menggunakan `Promise.all` dan disimpan di cache memory lokal (`kvCooldownedKeys`). Pembacaan di dalam loop kini instan dari memori.
+### 3.2 Bug Kritis: Rate Limit (503) Mem-blacklist Key Secara Global
+*   **Masalah:** Saat model `gemini-3.5-flash` mengembalikan error 503 (High Demand), bot memasukkan API Key ke `blacklistedKeysGlobal` **dan** menulis cooldown ke KV. Akibatnya, saat bot hendak mencoba model fallback (`gemini-3.1-flash-lite`), semua key sudah di-blacklist global sehingga bot langsung menyerah tanpa mencoba fallback sama sekali.
+*   **Solusi:** Error rate limit / high demand (`GEMINI_RETRY_TRIGGER`) kini hanya memasukkan key ke `blacklistedKeysPerModel` (per-model), bukan ke global blacklist. Key tersebut bebas digunakan pada model lain.
 
-### 3. Risiko Kelelahan CPU (CPU Limit Exceeded) pada Pemrosesan Media & File Besar (Telah Diperbaiki)
-*   **Masalah:** Konversi ArrayBuffer/Uint8Array ke Base64 pada `prepareMediaPart` dan `createOrUpdateFile` sebelumnya menggunakan `for` loop tradisional per byte karakter:
-    ```javascript
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    ```
-    Untuk gambar berukuran 1 MB atau teks file besar, loop ini berjalan 1 juta kali. Pada Cloudflare Workers Free Tier, komputasi seberat ini pasti memicu pembatasan CPU (CPU limit exceeded) dan mematikan Worker seketika.
-*   **Solusi:** Dibuat fungsi utilitas `bufferToBase64` baru di `src/utils/array.js` menggunakan metode chunking berbasis `subarray` dan `String.fromCharCode.apply`:
-    ```javascript
-    export function bufferToBase64(buffer) {
-      const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-      let binary = "";
-      const len = bytes.byteLength;
-      for (let i = 0; i < len; i += 8192) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
-      }
-      return btoa(binary);
-    }
-    ```
-    Metode ini sangat efisien, cepat, dan aman terhadap batas CPU Workers.
+### 3.3 Silent Worker Death: Perintah `/quota` Tanpa Respon
+*   **Masalah:** Pengecekan `/quota` sebelumnya mengirim seluruh request secara bersamaan (`Promise.all` untuk 6 key × 3 model = 18 request). Cloudflare membatasi 6 koneksi keluar per host. Sisanya mengantre dan melebihi timeout 5 detik, lalu totalnya melebihi batas 30 detik Worker, sehingga Worker dibunuh paksa tanpa sempat mengirim pesan.
+*   **Solusi:** Menggunakan chunked concurrency (maks 5 request bersamaan) dengan global timeout 25 detik yang menjamin bot selalu mengirim respon sebelum batas 30 detik.
 
-### 4. Risiko Silent Failure Akibat Worker Dipaksa Berhenti (Telah Diperbaiki)
-*   **Masalah:** Nilai `EXECUTION_TIMEOUT` bot sebelumnya diatur 90 detik. Padahal batas wall-clock time Workers di Free Tier dibatasi 30 detik. Jika bot kehabisan waktu di 30 detik, bot akan dihentikan paksa tanpa mengirimkan respons error ke pengguna. Selain itu, request GitHub API tidak memiliki timeout sehingga bisa menggantung.
-*   **Solusi:** 
-    *   Menurunkan `EXECUTION_TIMEOUT` di handler pesan menjadi **25 detik** sehingga bot sempat mengirimkan pesan peringatan ramah ke pengguna sebelum mati.
-    *   Menurunkan lock TTL menjadi **60 detik** agar bot tidak terkunci terlalu lama jika terjadi kegagalan sistem.
-    *   Menambahkan timeout **15 detik** dengan `AbortController` di `callGitHubAPI` agar bot langsung membatalkan request dan melakukan penanganan error jika GitHub API lambat.
+### 3.4 Silent Worker Death: Perintah Terblokir oleh Lock
+*   **Masalah:** Semua perintah (`/quota`, `/unblock`, `/reset`, `/help`) dieksekusi **setelah** pengecekan lock. Jika proses sebelumnya macet dan lock belum dihapus, seluruh perintah akan ditolak dengan pesan "masih proses yang tadi" — termasuk perintah darurat `/unblock` yang seharusnya bisa memperbaiki situasi.
+*   **Solusi:** Memindahkan parsing dan eksekusi perintah ke **sebelum** pengecekan lock dan rate limit. Perintah utilitas selalu bisa dijalankan kapan saja. Lock dan rate limit hanya berlaku untuk pesan obrolan biasa.
+
+### 3.5 Silent Worker Death: Telegram API Tanpa Timeout
+*   **Masalah:** Fungsi `sendTelegramMessage` dan `sendTelegramAction` memanggil `fetch()` tanpa `AbortController`. Jika server Telegram lambat atau tidak merespon, Worker menggantung hingga batas 30 detik dan mati tanpa mengirim apapun.
+*   **Solusi:** Menambahkan helper `fetchWithTimeout` di `telegram.js`:
+    *   `sendTelegramAction` (typing indicator): timeout 5 detik.
+    *   `sendTelegramMessage` (kirim pesan): timeout 10 detik.
+
+### 3.6 Silent Worker Death: Download Media Tanpa Timeout
+*   **Masalah:** `prepareMediaPart` mengunduh file dari server Telegram tanpa timeout. File besar (foto resolusi tinggi, voice panjang) bisa memakan waktu lama dan Worker mati paksa.
+*   **Solusi:** Menambahkan `AbortController` timeout:
+    *   `getFile` API call: timeout 5 detik.
+    *   Download konten file: timeout 10 detik.
+
+### 3.7 Memory Leak: Typing Timer Tidak Dihentikan
+*   **Masalah:** `sendTyping` menggunakan `setTimeout` secara rekursif tetapi referensi timer tidak pernah dibersihkan. Meskipun flag `isProcessing` dicek, timer yang sudah terjadwal tetap akan berjalan sekali lagi setelah proses selesai.
+*   **Solusi:** Menyimpan referensi `typingTimer` dan menambahkan `clearTimeout(typingTimer)` di blok `finally` dari `processMessage`.
+
+### 3.8 Bottleneck CPU: Konversi Base64 Per-Byte
+*   **Masalah:** Konversi ArrayBuffer ke Base64 menggunakan `for` loop per byte karakter. Untuk gambar 1 MB, loop berjalan 1 juta kali dan pasti memicu CPU limit exceeded.
+*   **Solusi:** Fungsi `bufferToBase64` di `src/utils/array.js` menggunakan chunking 8KB dengan `String.fromCharCode.apply` dan `subarray`.
 
 ---
 
-## 4. Panduan Variabel Lingkungan (Environment Variables)
+## 4. Timeout Budget Keseluruhan
+
+Ringkasan alokasi timeout di seluruh sistem untuk memastikan total eksekusi tidak melebihi 30 detik (batas Cloudflare Workers Free Tier):
+
+| Komponen | Timeout | Keterangan |
+| :--- | :--- | :--- |
+| `fetchGeminiGenerate` | 8 detik | Per-request ke Gemini API |
+| `callGitHubAPI` | 15 detik | Per-request ke GitHub API |
+| `sendTelegramMessage` | 10 detik | Per-pengiriman pesan ke Telegram |
+| `sendTelegramAction` | 5 detik | Per-pengiriman typing indicator |
+| `prepareMediaPart` (getFile) | 5 detik | Mendapatkan info file dari Telegram |
+| `prepareMediaPart` (download) | 10 detik | Download konten media dari Telegram |
+| `processMessage` (total) | **25 detik** | Batas total eksekusi pemrosesan pesan |
+| `checkGeminiQuota` (total) | **25 detik** | Batas total eksekusi pengecekan kuota |
+| `lockKey` TTL | 60 detik | Auto-expire lock jika Worker crash |
+
+---
+
+## 5. Panduan Variabel Lingkungan (Environment Variables)
 
 Berikut variabel konfigurasi di `wrangler.jsonc` atau dashboard Cloudflare yang penting untuk operasional bot ini:
 
@@ -112,3 +152,30 @@ Berikut variabel konfigurasi di `wrangler.jsonc` atau dashboard Cloudflare yang 
 | `GITHUB_PAT_TOKEN` | Personal Access Token GitHub dengan hak akses repositori yang sesuai. | `ghp_abc123...` |
 | `GEMINI_SYSTEM_PERSONA`| Perilaku dan kepribadian Cocoa. | *(Lihat wrangler.jsonc)* |
 | `GEMINI_SYSTEM_INSTRUCTION`| Instruksi teknis untuk tinjauan kode / PR GitHub. | *(Lihat wrangler.jsonc)* |
+
+---
+
+## 6. Struktur Direktori Proyek
+
+```
+tg-bot/
+├── src/
+│   ├── config.js              # Konstanta konfigurasi (TTL, limit, dll.)
+│   ├── handlers/
+│   │   ├── webhook.js          # Entry point Cloudflare Worker, command routing
+│   │   └── message.js          # Logika pemrosesan pesan utama & agent loop
+│   ├── services/
+│   │   ├── gemini.js           # Integrasi Gemini API & pengecekan kuota
+│   │   ├── github.js           # REST client helper untuk GitHub API
+│   │   ├── media.js            # Download & konversi media Telegram ke Base64
+│   │   └── telegram.js         # Pengiriman pesan & typing indicator ke Telegram
+│   ├── tools/
+│   │   ├── definitions.js      # Definisi tool schema untuk Gemini function calling
+│   │   └── executor.js         # Eksekutor tool calls dari Gemini
+│   └── utils/
+│       ├── array.js            # Utilitas array (shuffle, bufferToBase64)
+│       └── formatter.js        # Konversi Markdown ke Telegram Rich HTML
+├── docs/
+│   └── features.md             # Dokumentasi ini
+└── wrangler.jsonc              # Konfigurasi Cloudflare Workers & env variables
+```

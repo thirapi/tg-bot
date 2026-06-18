@@ -4,12 +4,20 @@ import { splitIntoChunks, stripHtml } from "../utils/formatter.js";
 const TG_API = (token, method) =>
   `https://api.telegram.org/bot${token}/${method}`;
 
+function fetchWithTimeout(url, options, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal })
+    .then(res => { clearTimeout(timeoutId); return res; })
+    .catch(err => { clearTimeout(timeoutId); throw err; });
+}
+
 export async function sendTelegramAction(token, chatId, action) {
-  return fetch(TG_API(token, "sendChatAction"), {
+  return fetchWithTimeout(TG_API(token, "sendChatAction"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ chat_id: chatId, action }),
-  });
+  }, 5000);
 }
 
 export async function sendTelegramMessage(token, chatId, htmlText) {
@@ -21,14 +29,14 @@ export async function sendTelegramMessage(token, chatId, htmlText) {
       text: chunk,
       parse_mode: "HTML",
     };
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const plainText = stripHtml(chunk);
-      await fetch(url, {
+      await fetchWithTimeout(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ chat_id: chatId, text: plainText }),

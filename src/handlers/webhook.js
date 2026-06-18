@@ -33,6 +33,76 @@ export async function handleWebhook(request, env, ctx) {
       return new Response("OK", { status: 200 });
     }
 
+    const text = message.text || message.caption || "";
+    const normalizedText = text.trim().toLowerCase();
+
+    if (normalizedText === "/start" || normalizedText === "/reset") {
+      ctx.waitUntil((async () => {
+        await env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 });
+        await env.CHAT_HISTORY.delete(chatId);
+        await env.CHAT_HISTORY.delete(lockKey).catch(() => { });
+        await sendTelegramMessage(
+          env.TELEGRAM_BOT_TOKEN,
+          chatId,
+          "Oke, memorinya udah aku hapus ya. Sekarang kita mulai obrolan baru lagi, mau bahas apa nih?",
+        );
+      })());
+      return new Response("OK", { status: 200 });
+    }
+
+    if (normalizedText === "/help") {
+      ctx.waitUntil((async () => {
+        await env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 });
+        const helpMsg =
+          "<b>Bisa apa aja?</b>\n" +
+          "/start atau /reset - Hapus memori biar kita mulai dari awal lagi\n" +
+          "/help - Lihat daftar ini\n" +
+          "/unblock - Reset status blacklist dan lock jika bot stuck\n" +
+          "/quota atau /keys - Cek sisa kuota dan status API Key\n\n" +
+          "Selain ngobrol santai, aku juga bisa bantu kamu cek issue di GitHub, review PR, atau liat-liat foto dan dengerin pesan suara kamu. Kasih tau aja ya!";
+        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, helpMsg);
+      })());
+      return new Response("OK", { status: 200 });
+    }
+
+    if (normalizedText === "/unblock") {
+      ctx.waitUntil((async () => {
+        try {
+          await env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 });
+          const keys = (env.GEMINI_API_KEYS || "").split(",").map((k) => k.trim()).filter(Boolean);
+          const deletePromises = keys.map(key => env.CHAT_HISTORY.delete(`cooldown:${key.slice(-6)}`));
+          await Promise.all([
+            ...deletePromises,
+            env.CHAT_HISTORY.delete(lockKey).catch(() => { })
+          ]);
+          await sendTelegramMessage(
+            env.TELEGRAM_BOT_TOKEN,
+            chatId,
+            "✅ Semua status blacklist/cooldown API Key dan kunci pemrosesan (lock) di memori sistem (KV) telah dihapus! Bot siap menerima pesan baru.",
+          );
+        } catch (err) {
+          console.error("Unblock Error:", err);
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Aduh, gagal reset blacklist nih.");
+        }
+      })());
+      return new Response("OK", { status: 200 });
+    }
+
+    if (normalizedText === "/quota" || normalizedText === "/keys") {
+      ctx.waitUntil((async () => {
+        try {
+          await env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 });
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Sip, tunggu bentar ya! Aku cek dulu status semua API Key dan modelnya...");
+          const quotaStatus = await checkGeminiQuota(env);
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, quotaStatus);
+        } catch (err) {
+          console.error("Quota Check Error:", err);
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Aduh, ada error pas lagi cek quota. Coba lagi nanti ya!");
+        }
+      })());
+      return new Response("OK", { status: 200 });
+    }
+
     const lastReqTimeStr = await env.CHAT_HISTORY.get(rateLimitKey);
     const now = Date.now();
     if (lastReqTimeStr) {
@@ -60,81 +130,8 @@ export async function handleWebhook(request, env, ctx) {
       env.CHAT_HISTORY.put(lockKey, "1", { expirationTtl: 60 })
     ]);
 
-    const text = message.text || message.caption || "";
-    const normalizedText = text.trim().toLowerCase();
-
-    if (normalizedText === "/start" || normalizedText === "/reset") {
-      ctx.waitUntil((async () => {
-        try {
-          await env.CHAT_HISTORY.delete(chatId);
-          await sendTelegramMessage(
-            env.TELEGRAM_BOT_TOKEN,
-            chatId,
-            "Oke, memorinya udah aku hapus ya. Sekarang kita mulai obrolan baru lagi, mau bahas apa nih?",
-          );
-        } finally {
-          await env.CHAT_HISTORY.delete(lockKey).catch(() => {});
-        }
-      })());
-      return new Response("OK", { status: 200 });
-    }
-
-    if (normalizedText === "/help") {
-      ctx.waitUntil((async () => {
-        try {
-          const helpMsg =
-            "<b>Bisa apa aja?</b>\n" +
-            "/start atau /reset - Hapus memori biar kita mulai dari awal lagi\n" +
-            "/help - Lihat daftar ini\n" +
-            "/quota atau /keys - Cek sisa kuota dan status API Key\n\n" +
-            "Selain ngobrol santai, aku juga bisa bantu kamu cek issue di GitHub, review PR, atau liat-liat foto dan dengerin pesan suara kamu. Kasih tau aja ya!";
-          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, helpMsg);
-        } finally {
-          await env.CHAT_HISTORY.delete(lockKey).catch(() => {});
-        }
-      })());
-      return new Response("OK", { status: 200 });
-    }
-
-    if (normalizedText === "/unblock") {
-      ctx.waitUntil((async () => {
-        try {
-          const keys = (env.GEMINI_API_KEYS || "").split(",").map((k) => k.trim()).filter(Boolean);
-          const deletePromises = keys.map(key => env.CHAT_HISTORY.delete(`cooldown:${key.slice(-6)}`));
-          await Promise.all(deletePromises);
-          await sendTelegramMessage(
-            env.TELEGRAM_BOT_TOKEN,
-            chatId,
-            "✅ Semua status blacklist/cooldown API Key di memori sistem (KV) telah dihapus! Bot akan mencoba menggunakan semua key dari awal lagi.",
-          );
-        } catch (err) {
-          console.error("Unblock Error:", err);
-          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Aduh, gagal reset blacklist nih.");
-        } finally {
-          await env.CHAT_HISTORY.delete(lockKey).catch(() => {});
-        }
-      })());
-      return new Response("OK", { status: 200 });
-    }
-
-    if (normalizedText === "/quota" || normalizedText === "/keys") {
-      ctx.waitUntil((async () => {
-        try {
-          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Sip, tunggu bentar ya! Aku cek dulu status semua API Key dan modelnya...");
-          const quotaStatus = await checkGeminiQuota(env);
-          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, quotaStatus);
-        } catch (err) {
-          console.error("Quota Check Error:", err);
-          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Aduh, ada error pas lagi cek quota. Coba lagi nanti ya!");
-        } finally {
-          await env.CHAT_HISTORY.delete(lockKey).catch(() => {});
-        }
-      })());
-      return new Response("OK", { status: 200 });
-    }
-
     ctx.waitUntil(processMessage(message, env));
-    
+
     return new Response("OK", { status: 200 });
 
   } catch (err) {

@@ -14,12 +14,15 @@ export async function processMessage(message, env) {
   const lockKey = `lock:${chatId}`;
   let isProcessing = true;
 
+  let typingTimer = null;
   const sendTyping = async () => {
     if (!isProcessing) return;
     try {
       await sendTelegramAction(env.TELEGRAM_BOT_TOKEN, chatId, "typing");
     } catch (_) { }
-    setTimeout(sendTyping, 4000);
+    if (isProcessing) {
+      typingTimer = setTimeout(sendTyping, 4000);
+    }
   };
   sendTyping();
 
@@ -261,6 +264,7 @@ export async function processMessage(message, env) {
     );
   } finally {
     isProcessing = false;
+    clearTimeout(typingTimer);
     console.log(`Releasing lock for chat: ${chatId}`);
 
     await env.CHAT_HISTORY.delete(lockKey).catch((e) => {
