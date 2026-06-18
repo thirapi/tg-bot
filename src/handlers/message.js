@@ -77,6 +77,7 @@ export async function processMessage(message, env) {
     const blacklistedModels = new Set();
     const blacklistedKeysGlobal = new Set();
     const blacklistedKeysPerModel = new Set();
+    let globalFailures = 0;
 
     const cooldownStatuses = await Promise.all(
       keys.map(async (key) => {
@@ -139,28 +140,43 @@ export async function processMessage(message, env) {
 
           const keyShort = key.slice(-6);
           try {
-            geminiResponse = await fetchGeminiGenerate(
-              model,
-              key,
-              currentContents,
-              env,
-            );
+            const fetchPromise = fetchGeminiGenerate(model, key, currentContents, env);
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("GEMINI_RETRY_TRIGGER: Request Timeout (5s)")), 5000));
+
+            geminiResponse = await Promise.race([fetchPromise, timeoutPromise]);
             if (geminiResponse) break outerLoop;
           } catch (err) {
             console.error(`Error dengan model ${model} [Key: ${keyShort}...]:`, err.message);
             lastError = err;
+            globalFailures++;
 
-            if (err.message.includes("GEMINI_RETRY_TRIGGER") || err.message.includes("429") || err.message.includes("503")) {
-              console.warn(`[Cooldown Triggered] Key ${keyShort} limit/timeout di model ${model}.`);
+            if (globalFailures >= 3) {
+              throw new Error("Sistem Google AI sedang mengalami gangguan berat berturut-turut. Coba kirim ulang pesan beberapa saat lagi ya!");
+            }
 
+            if (err.message.includes("503") || err.message.includes("UNAVAILABLE")) {
+              console.warn(`[Model Down] Model ${model} sibuk (503). Langsung skip model.`);
+              blacklistedModels.add(model);
+              break;
+            }
+
+            if (err.message.includes("GEMINI_RETRY_TRIGGER") || err.message.includes("429") || err.message.includes("RESOURCE_EXHAUSTED")) {
+              console.warn(`[Cooldown Triggered] Key ${keyShort} limit/timeout diblokir secara global untuk sesi ini.`);
+              blacklistedKeysGlobal.add(key);
               blacklistedKeysPerModel.add(`${model}:${key}`);
-              consecutiveFailures++;
 
+              let expirationTtl = 60;
+              const match = err.message.match(/"retryDelay":\s*"(\d+)s"/);
+              if (match && match[1]) {
+                expirationTtl = parseInt(match[1], 10) + 5;
+              }
+              await env.CHAT_HISTORY.put(`cooldown:${keyShort}`, "1", { expirationTtl });
+
+              consecutiveFailures++;
               if (consecutiveFailures >= MAX_FAILURES_BEFORE_SKIP) {
                 console.warn(`[Skip Model] ${model} gagal ${consecutiveFailures}x berturut-turut, lanjut ke model berikutnya.`);
                 break;
               }
-
               continue;
             }
 
