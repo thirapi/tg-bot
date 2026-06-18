@@ -110,16 +110,23 @@ async function main() {
         }
       }
 
-      await sendTelegramUpdate(`Lagi aku build dulu ya buat Iterasi ${iteration}...`);
-      buildStatus = runCommand('npm install && npm run build');
+      const shouldBuild = suggestion && suggestion.needsBuild === true;
+      if (shouldBuild) {
+        await sendTelegramUpdate(`🔨 Menjalankan build (Iterasi ${iteration})...`);
+        buildStatus = runCommand('npm install && npm run build');
 
-      if (buildStatus.success) {
-        await sendTelegramUpdate(`Hore! **Buildnya sukses** di iterasi ke-${iteration}.`);
-        break;
+        if (buildStatus.success) {
+          await sendTelegramUpdate(`Hore! **Buildnya sukses** di iterasi ke-${iteration}.`);
+          break;
+        } else {
+          lastError = buildStatus.output;
+          console.error(`Build failed in iteration ${iteration}`);
+          await sendTelegramUpdate(`Duh, **buildnya gagal** di iterasi ${iteration}.\n\nError:\n\`\`\`\n${lastError.substring(0, 1500)}\n\`\`\``);
+        }
       } else {
-        lastError = buildStatus.output;
-        console.error(`Build failed in iteration ${iteration}`);
-        await sendTelegramUpdate(`Duh, **buildnya gagal** di iterasi ${iteration}.\n\nError:\n\`\`\`\n${lastError.substring(0, 1500)}\n\`\`\``);
+        buildStatus = { success: true, output: '' };
+        await sendTelegramUpdate(`📝 Perubahan dokumentasi selesai. Tidak perlu build.`);
+        break;
       }
     }
 
@@ -128,7 +135,7 @@ async function main() {
       execSync('git add .');
       const status = execSync('git status --porcelain', { encoding: 'utf8' });
       if (status.trim()) {
-        execSync(`git commit -m "chore: auto-fix build based on Gemini suggestions\n\nOriginal Instruction: ${INSTRUCTION}"`);
+        execSync(`git commit -m "chore: auto-fix by Gemini\n\nOriginal Instruction: ${INSTRUCTION}"`);
         execSync('git push origin main');
         await sendTelegramUpdate(`Beres! Perubahan udah aku push ke branch \`main\` ya.`);
       } else {

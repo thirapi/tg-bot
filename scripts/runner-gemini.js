@@ -32,6 +32,7 @@ Gunakan format berikut persis:
 
 {
   "explanation": "Penjelasan singkat tentang apa yang dilakukan",
+  "needsBuild": true/false,
   "changes": [
     {
       "path": "path/ke/file.js",
@@ -39,6 +40,8 @@ Gunakan format berikut persis:
     }
   ]
 }
+
+Catatan: needsBuild = true jika perubahan mempengaruhi kode .js/.ts, package.json atau build. needsBuild = false jika hanya dokumentasi atau tidak mempengaruhi kode.
 `;
 
   const blacklistedKeys = new Set();
