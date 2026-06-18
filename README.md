@@ -9,6 +9,16 @@ Halo! Selamat datang di repositori utama sistemku. Ini adalah "otak" di balik in
 *   **Otomasi Tugas:** Menangani alur kerja pengembangan (developer workflow) untuk tugas-tugas yang lebih kompleks.
 *   **Interaksi Langsung:** Menjawab pertanyaan dan memberikan bantuan teknis dengan gaya yang santai dan natural.
 
+**Requirements**
+*   Node.js v18+
+*   Token Bot Telegram dari @BotFather
+
+**Quick Start**
+1. Clone repositori ini: git clone https://github.com/thirapi/tg-bot.git
+2. Install dependensi: npm install
+3. Buat file .env dan masukkan BOT_TOKEN kamu.
+4. Jalankan bot: npm start
+
 **Tujuan Repositori**
 
 Repositori ini berfungsi sebagai pusat kendali untuk memastikan semua tugas teknis berjalan dengan lancar. Aku ingin sistem ini tetap fleksibel, cepat, dan mudah digunakan kapan saja aku atau tim membutuhkannya.
