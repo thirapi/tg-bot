@@ -61,7 +61,7 @@ export async function processMessage(message, env) {
     }
 
     const keys = env.GEMINI_API_KEYS.split(",").map((k) => k.trim());
-    const models = (env.GEMINI_MODELS || "gemini-3.1-flash-lite,gemini-3.5-flash,gemini-3-flash-preview")
+    const models = (env.GEMINI_MODELS || "gemini-3.1-flash-lite,gemini-3-flash-preview,gemini-3.5-flash")
       .split(",")
       .map((m) => m.trim());
 
@@ -102,7 +102,7 @@ export async function processMessage(message, env) {
       let geminiResponse = null;
       let lastError = null;
 
-      const activeModels = models.filter((m) => !blacklistedModels.has(m));
+      let activeModels = models.filter((m) => !blacklistedModels.has(m));
       if (activeModels.length === 0) {
         throw new Error(
           "Seluruh model Gemini tidak dapat digunakan (terkena blacklist atau limit).",
@@ -116,27 +116,21 @@ export async function processMessage(message, env) {
         for (const key of keys) {
           const isLocallyDown = blacklistedKeysPerModel.has(`${model}:${key}`);
           const isGloballyDown = blacklistedKeysGlobal.has(key) || kvCooldownedKeys.has(key);
-
           if (!isLocallyDown && !isGloballyDown) {
             availableKeys.push(key);
+            if (availableKeys.length >= 3) break;
           }
         }
 
-        const shuffledKeys = shuffleArray(availableKeys);
+        if (availableKeys.length === 0) continue;
 
-        if (shuffledKeys.length === 0) {
-          console.warn(`Semua API Key untuk model ${model} sudah dicoba dan gagal/limit.`);
-          continue;
-        }
+        const shuffledKeys = shuffleArray(availableKeys);
 
         let consecutiveFailures = 0;
         const MAX_FAILURES_BEFORE_SKIP = 2;
 
         for (const key of shuffledKeys) {
-          if (Date.now() - startTime > EXECUTION_TIMEOUT) {
-            console.warn(`[Timeout] Batas waktu tercapai sebelum mencoba key berikutnya pada model ${model}.`);
-            break outerLoop;
-          }
+          if (Date.now() - startTime > EXECUTION_TIMEOUT) break outerLoop;
 
           const keyShort = key.slice(-6);
           try {
@@ -155,40 +149,31 @@ export async function processMessage(message, env) {
             }
 
             if (err.message.includes("503") || err.message.includes("UNAVAILABLE")) {
-              console.warn(`[Model Down] Model ${model} sibuk (503). Langsung skip model.`);
               blacklistedModels.add(model);
               break;
             }
 
             if (err.message.includes("GEMINI_RETRY_TRIGGER") || err.message.includes("429") || err.message.includes("RESOURCE_EXHAUSTED")) {
-              console.warn(`[Cooldown Triggered] Key ${keyShort} limit/timeout diblokir secara global untuk sesi ini.`);
               blacklistedKeysGlobal.add(key);
               blacklistedKeysPerModel.add(`${model}:${key}`);
 
               let expirationTtl = 60;
               const match = err.message.match(/"retryDelay":\s*"(\d+)s"/);
-              if (match && match[1]) {
-                expirationTtl = parseInt(match[1], 10) + 5;
-              }
+              if (match && match[1]) expirationTtl = parseInt(match[1], 10) + 5;
               await env.CHAT_HISTORY.put(`cooldown:${keyShort}`, "1", { expirationTtl });
 
               consecutiveFailures++;
-              if (consecutiveFailures >= MAX_FAILURES_BEFORE_SKIP) {
-                console.warn(`[Skip Model] ${model} gagal ${consecutiveFailures}x berturut-turut, lanjut ke model berikutnya.`);
-                break;
-              }
+              if (consecutiveFailures >= MAX_FAILURES_BEFORE_SKIP) break;
               continue;
             }
 
             if (err.message.includes("GEMINI_KEY_INVALID") || err.message.includes("GEMINI_KEY_BLOCKED")) {
-              console.warn(`[Key Blocked] Key ${keyShort} tidak valid atau diblokir.`);
               blacklistedKeysGlobal.add(key);
               await env.CHAT_HISTORY.put(`cooldown:${keyShort}`, "1", { expirationTtl: 600 });
               continue;
             }
 
             if (err.message.includes("GEMINI_MODEL_NOT_FOUND") || err.message.includes("404")) {
-              console.warn(`Model ${model} dimasukkan ke blacklist sesi karena tidak ditemukan.`);
               blacklistedModels.add(model);
               break;
             }
@@ -250,9 +235,7 @@ export async function processMessage(message, env) {
         break;
       }
 
-      if (functionCalls.length === 0) {
-        break;
-      }
+      if (functionCalls.length === 0) break;
     }
 
     if (finalGeminiText) {
