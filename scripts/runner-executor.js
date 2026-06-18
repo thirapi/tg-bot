@@ -42,22 +42,27 @@ function runCommand(command) {
   }
 }
 
-function getFilesRecursively(dir) {
-  let results = [];
+function getFilesRecursively(dir, results = []) {
+  const ignore = ['node_modules', '.git', '.next', 'dist', 'build', '.cache'];
   if (!fs.existsSync(dir)) return results;
   const list = fs.readdirSync(dir);
   for (const file of list) {
+    if (ignore.includes(file)) continue;
     const filePath = path.join(dir, file);
     const stat = fs.statSync(filePath);
     if (stat && stat.isDirectory()) {
-      results = results.concat(getFilesRecursively(filePath));
-    } else {
-      if (/\.(js|ts)$/i.test(filePath)) {
-        results.push(filePath);
-      }
+      getFilesRecursively(filePath, results);
+    } else if (/\.(js|ts)$/i.test(filePath)) {
+      results.push(filePath);
     }
   }
   return results;
+}
+
+function getInstallCommand() {
+  if (fs.existsSync('pnpm-lock.yaml')) return 'pnpm install && pnpm run build';
+  if (fs.existsSync('yarn.lock')) return 'yarn install && yarn run build';
+  return 'npm install && npm run build';
 }
 
 async function main() {
@@ -86,11 +91,11 @@ async function main() {
       const shouldEditFirst = iteration === 1 && INSTRUCTION.toLowerCase() !== 'test build';
       const isHealing = iteration > 1;
 
+      let suggestion = null;
+
       if (shouldEditFirst || isHealing) {
         const fileContexts = [];
-        const srcFiles = getFilesRecursively('src');
-        const rootFiles = getFilesRecursively('.');
-        const allFiles = [...new Set([...srcFiles, ...rootFiles])];
+        const allFiles = getFilesRecursively('.');
 
         for (const f of allFiles) {
           fileContexts.push({ path: f, content: fs.readFileSync(f, 'utf8') });
@@ -99,7 +104,7 @@ async function main() {
         const statusMsg = isHealing ? `🔄 **Iterasi ${iteration}**: Bentar ya, aku coba benerin dulu errornya...` : `🎨 **Iterasi 1**: Aku terapin dulu ya instruksinya...`;
         await sendTelegramUpdate(statusMsg);
 
-        const suggestion = await getFixSuggestion(INSTRUCTION, lastError, fileContexts);
+        suggestion = await getFixSuggestion(INSTRUCTION, lastError, fileContexts);
         await sendTelegramUpdate(`💡 **Saran dari aku**: ${suggestion.explanation}`);
 
         for (const change of suggestion.changes) {
@@ -110,10 +115,9 @@ async function main() {
         }
       }
 
-      const shouldBuild = suggestion && suggestion.needsBuild === true;
-      if (shouldBuild) {
+      if (suggestion && suggestion.needsBuild === true) {
         await sendTelegramUpdate(`🔨 Menjalankan build (Iterasi ${iteration})...`);
-        buildStatus = runCommand('npm install && npm run build');
+        buildStatus = runCommand(getInstallCommand());
 
         if (buildStatus.success) {
           await sendTelegramUpdate(`Hore! **Buildnya sukses** di iterasi ke-${iteration}.`);

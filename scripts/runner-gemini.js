@@ -8,6 +8,9 @@ const shuffle = (array) => {
   return array;
 };
 
+const blacklistedKeys = new Set();
+const blacklistedModels = new Set();
+
 export async function getFixSuggestion(instruction, errorLog, fileContexts = []) {
   const keys = (process.env.GEMINI_API_KEYS || "").split(",").map(k => k.trim()).filter(k => k);
   const models = (process.env.GEMINI_MODELS || "gemini-3.1-flash-lite,gemini-3-flash-preview,gemini-3.5-flash").split(",").map(m => m.trim());
@@ -44,9 +47,6 @@ Gunakan format berikut persis:
 Catatan: needsBuild = true jika perubahan mempengaruhi kode .js/.ts, package.json atau build. needsBuild = false jika hanya dokumentasi atau tidak mempengaruhi kode.
 `;
 
-  const blacklistedKeys = new Set();
-  const blacklistedModels = new Set();
-
   for (const modelName of models) {
     if (blacklistedModels.has(modelName)) continue;
 
@@ -71,7 +71,11 @@ Catatan: needsBuild = true jika perubahan mempengaruhi kode .js/.ts, package.jso
         const response = await result.response;
         let text = response.text().trim();
 
-        text = text.replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
+        const firstBrace = text.indexOf('{');
+        const lastBrace = text.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1) {
+          text = text.substring(firstBrace, lastBrace + 1);
+        }
 
         const parsed = JSON.parse(text);
 
@@ -85,8 +89,11 @@ Catatan: needsBuild = true jika perubahan mempengaruhi kode .js/.ts, package.jso
         const msg = error.message || "";
         console.error(`Error dengan ${modelName} [${key.substring(0, 6)}...]: ${msg}`);
 
-        if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("timeout") || msg.includes("503") || msg.includes("500")) {
+        if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) {
           blacklistedKeys.add(key);
+          continue;
+        }
+        if (msg.includes("503") || msg.includes("500") || msg.includes("timeout") || msg.includes("Timeout")) {
           continue;
         }
         if (msg.includes("404") || msg.includes("400") || msg.includes("not found")) {
