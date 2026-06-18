@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { getFixSuggestion } from './runner-gemini.js';
@@ -139,7 +139,8 @@ async function main() {
       execSync('git add .');
       const status = execSync('git status --porcelain', { encoding: 'utf8' });
       if (status.trim()) {
-        execSync(`git commit -m "chore: auto-fix by Gemini\n\nOriginal Instruction: ${INSTRUCTION}"`);
+        const commitMsg = `chore: auto-fix by Gemini\n\nOriginal Instruction: ${INSTRUCTION}`;
+        execFileSync('git', ['commit', '-m', commitMsg]);
         execSync('git push origin main');
         await sendTelegramUpdate(`Beres! Perubahan udah aku push ke branch \`main\` ya.`);
       } else {
