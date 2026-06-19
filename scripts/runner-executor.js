@@ -122,6 +122,17 @@ async function main() {
           fs.writeFileSync(fullPath, change.content, 'utf8');
           console.log(`Updated: ${safeRelativePath}`);
         }
+
+        if (suggestion.deletedPaths && Array.isArray(suggestion.deletedPaths)) {
+          for (const delPath of suggestion.deletedPaths) {
+            const safeDelRelative = path.normalize(delPath).replace(/^(\.\.(\/|\\|$))+/, '');
+            const fullDelPath = path.join(process.cwd(), safeDelRelative);
+            if (fs.existsSync(fullDelPath)) {
+              fs.rmSync(fullDelPath, { force: true, recursive: true });
+              console.log(`Deleted locally: ${safeDelRelative}`);
+            }
+          }
+        }
       }
 
       if (suggestion && suggestion.needsBuild === true) {
@@ -157,17 +168,17 @@ async function main() {
           const branchName = `auto-fix/${Date.now()}`;
           execSync(`git checkout -b ${branchName}`);
           execFileSync('git', ['commit', '-m', commitMsg]);
-          execSync(`git push origin ${branchName}`);
+          execSync(`git push https://x-access-token:${GLOBAL_WORKER_PAT}@github.com/${TARGET_REPO}.git ${branchName}`);
 
           const prTitle = `Auto-fix: ${safeInstruction.substring(0, 60).replace(/\n/g, ' ')}...`;
           const prBody = `🤖 **Kokoa Dev Agent Report**\n\n**Original Instruction:**\n${safeInstruction}`;
 
-          execSync(`gh pr create --title "${prTitle}" --body "${prBody}" --head ${branchName} --base main`);
+          execSync(`gh pr create --repo "${TARGET_REPO}" --title "${prTitle}" --body "${prBody}" --head "${branchName}" --base main`);
 
           await sendTelegramUpdate(`🚀 **Branch baru** \`${branchName}\` berhasil dibuat dan Pull Request telah dikirim ke \`main\`!`);
         } else {
           execFileSync('git', ['commit', '-m', commitMsg]);
-          execSync('git push origin main');
+          execSync(`git push https://x-access-token:${GLOBAL_WORKER_PAT}@github.com/${TARGET_REPO}.git main`);
           await sendTelegramUpdate(`Beres! Perubahan udah aku push ke branch \`main\` ya.`);
         }
       } else {
