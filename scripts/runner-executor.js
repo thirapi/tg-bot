@@ -66,7 +66,14 @@ function getInstallCommand() {
 }
 
 async function main() {
-  await sendTelegramUpdate(`🛠 **Lagi dikerjain nih!**\n\nRepo: \`${TARGET_REPO}\`\n\n*Instruksi:* ${INSTRUCTION}`);
+  const safeInstruction = String(INSTRUCTION || '');
+  
+  if (GLOBAL_WORKER_PAT) {
+    process.env.GITHUB_TOKEN = GLOBAL_WORKER_PAT;
+    process.env.GH_TOKEN = GLOBAL_WORKER_PAT;
+  }
+
+  await sendTelegramUpdate(`🛠 **Lagi dikerjain nih!**\n\nRepo: \`${TARGET_REPO}\`\n\n*Instruksi:* ${safeInstruction}`);
 
   try {
     const workDir = path.join(process.cwd(), 'target_workspace');
@@ -88,7 +95,7 @@ async function main() {
       iteration++;
       console.log(`--- Iterasi ${iteration} ---`);
 
-      const shouldEditFirst = iteration === 1 && INSTRUCTION.toLowerCase() !== 'test build';
+      const shouldEditFirst = iteration === 1 && safeInstruction.toLowerCase() !== 'test build';
       const isHealing = iteration > 1;
 
       let suggestion = null;
@@ -104,7 +111,7 @@ async function main() {
         const statusMsg = isHealing ? `🔄 **Iterasi ${iteration}**: Bentar ya, aku coba benerin dulu errornya...` : `🎨 **Iterasi 1**: Aku terapin dulu ya instruksinya...`;
         await sendTelegramUpdate(statusMsg);
 
-        suggestion = await getFixSuggestion(INSTRUCTION, lastError, fileContexts);
+        suggestion = await getFixSuggestion(safeInstruction, lastError, fileContexts);
         await sendTelegramUpdate(`💡 **Saran dari aku**: ${suggestion.explanation}`);
 
         for (const change of suggestion.changes) {
@@ -141,10 +148,28 @@ async function main() {
       execSync('git add .');
       const status = execSync('git status --porcelain', { encoding: 'utf8' });
       if (status.trim()) {
-        const commitMsg = `feat: auto-fix instruction applied\n\n- Applied changes based on: ${INSTRUCTION}\n- Status: Build successful\n\nCo-authored-by: thirapi <132630759+thirapi@users.noreply.github.com>`;
-        execFileSync('git', ['commit', '-m', commitMsg]);
-        execSync('git push origin main');
-        await sendTelegramUpdate(`Beres! Perubahan udah aku push ke branch \`main\` ya.`);
+        const commitMsg = `feat: auto-fix instruction applied\n\n- Applied changes based on: ${safeInstruction}\n- Status: Build successful\n\nCo-authored-by: thirapi <132630759+thirapi@users.noreply.github.com>`;
+        
+        const lowInstruction = safeInstruction.toLowerCase();
+        const butuhPR = lowInstruction.includes('pull request') || lowInstruction.includes('pr ') || lowInstruction.includes('branch baru');
+
+        if (butuhPR) {
+          const branchName = `auto-fix/${Date.now()}`;
+          execSync(`git checkout -b ${branchName}`);
+          execFileSync('git', ['commit', '-m', commitMsg]);
+          execSync(`git push origin ${branchName}`);
+
+          const prTitle = `Auto-fix: ${safeInstruction.substring(0, 60).replace(/\n/g, ' ')}...`;
+          const prBody = `🤖 **Kokoa Dev Agent Report**\n\n**Original Instruction:**\n${safeInstruction}`;
+
+          execSync(`gh pr create --title "${prTitle}" --body "${prBody}" --head ${branchName} --base main`);
+
+          await sendTelegramUpdate(`🚀 **Branch baru** \`${branchName}\` berhasil dibuat dan Pull Request telah dikirim ke \`main\`!`);
+        } else {
+          execFileSync('git', ['commit', '-m', commitMsg]);
+          execSync('git push origin main');
+          await sendTelegramUpdate(`Beres! Perubahan udah aku push ke branch \`main\` ya.`);
+        }
       } else {
         await sendTelegramUpdate(`Selesai! Kayaknya nggak ada yang perlu diubah deh.`);
       }
