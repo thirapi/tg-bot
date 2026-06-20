@@ -49,8 +49,35 @@ async function main() {
 
     console.log('Cloning...');
     if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
-    execSync(`git clone ${repoUrl} ${workDir}`);
-    process.chdir(workDir);
+    
+    try {
+      execSync(`git clone ${repoUrl} ${workDir}`, { stdio: 'pipe' });
+      process.chdir(workDir);
+    } catch (error) {
+      const stderr = (error.stderr || '').toString();
+      if (stderr.includes('not found')) {
+        console.log(`Repo ${TARGET_REPO} tidak ditemukan. Membuat repo baru...`);
+        await sendTelegramUpdate(`✨ Repositori \`${TARGET_REPO}\` belum ada. Aku akan buatkan yang baru untukmu...`);
+        
+        fs.mkdirSync(workDir, { recursive: true });
+        process.chdir(workDir);
+        execSync('git init');
+        try { execSync('git checkout -b main'); } catch(e) {} // pastikan branch main
+        
+        execSync('git config user.name "ccocoa"');
+        execSync('git config user.email "270871570+ccocoa@users.noreply.github.com"');
+
+        fs.writeFileSync('README.md', `# ${TARGET_REPO}\n\nRepository automatically created by Kokoa Dev Agent.`);
+        execSync('git add README.md');
+        execSync('git commit -m "chore: initial commit"');
+        
+        // Buat repo di GitHub dan push
+        execSync(`gh repo create ${TARGET_REPO} --public --source=. --remote=origin --push`);
+        await sendTelegramUpdate(`✅ Repositori \`${TARGET_REPO}\` berhasil dibuat! Melanjutkan instruksi...`);
+      } else {
+        throw error;
+      }
+    }
 
     execSync('git config user.name "ccocoa"');
     execSync('git config user.email "270871570+ccocoa@users.noreply.github.com"');
