@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { execSync } from "child_process";
 
 const shuffle = (array) => {
   for (let i = array.length - 1; i > 0; i--) {
@@ -79,9 +80,10 @@ const toolsDefinition = [
             commitMessage: { type: "STRING", description: "Pesan commit yang sesuai." },
             branchName: { type: "STRING", description: "Nama branch (gunakan strip, bukan spasi)." },
             prTitle: { type: "STRING", description: "Judul Pull Request." },
-            prBody: { type: "STRING", description: "Deskripsi Pull Request." }
+            prBody: { type: "STRING", description: "Deskripsi Pull Request." },
+            hasModifications: { type: "BOOLEAN", description: "Set ke true jika kamu telah melakukan perubahan file menggunakan writeFile. Set ke false jika tidak ada file yang perlu diubah (misal karena kode sudah benar)." }
           },
-          required: ["commitMessage", "branchName", "prTitle", "prBody"]
+          required: ["commitMessage", "branchName", "prTitle", "prBody", "hasModifications"]
         }
       }
     ]
@@ -99,14 +101,14 @@ Kamu memiliki akses langsung ke sistem file lokal melalui tools:
 - runCommand: untuk menjalankan perintah shell seperti 'npm install', 'npm run build', 'tsc --noEmit', atau 'grep'.
 - finishTask: panggil ini HANYA jika semua tugas sudah selesai, kode sudah terverifikasi (build sukses), dan siap di-commit.
 
-PENTING:
-1. Pahami instruksi user dengan baik.
-2. Eksplorasi codebase secara bertahap menggunakan listDirectory dan readFile. Jangan menebak-nebak isi file.
-3. Edit kode menggunakan writeFile.
-4. KAMU SUDAH BERADA DI DALAM ROOT DIREKTORI REPOSITORI TARGET. JANGAN menjalankan 'mkdir <nama-repo>' atau 'git init'. Langsung buat atau edit file di *current directory* ('./').
-5. JANGAN PERNAH menjalankan perintah 'git add', 'git commit', atau 'git push'. Sistem executor akan menangani proses commit dan push secara otomatis di akhir. Tugasmu HANYA membuat atau mengedit file.
-6. SELALU jalankan runCommand('npm run build') atau perintah verifikasi lainnya setelah melakukan perubahan kode, untuk memastikan kode tidak error.
-7. Jika sudah yakin 100% selesai dan file sudah diperbarui, panggil finishTask dengan argumen pesan commit, branch, dan deskripsi PR yang relevan.`;
+PENTING - BACA DENGAN SEKSAMA:
+1. LANGKAH 1 (Eksplorasi): Gunakan \`listDirectory\` dan \`readFile\` untuk memahami isi proyek.
+2. LANGKAH 2 (Eksekusi): Kamu WAJIB menggunakan tool \`writeFile\` untuk membuat atau mengedit file sesuai instruksi user. Jangan berhalusinasi telah membuat file jika kamu belum memanggil tool ini.
+3. JANGAN PERNAH memanggil \`finishTask\` jika kamu belum melakukan modifikasi kode menggunakan \`writeFile\`.
+4. KAMU SUDAH DI ROOT REPO. Langsung buat file di direktori \`./\` (JANGAN gunakan \`mkdir\` atau \`git init\`).
+5. JANGAN PERNAH gunakan \`git add\`, \`git commit\`, atau \`git push\`. Executor akan melakukannya otomatis.
+6. LANGKAH 3 (Verifikasi): Jika memungkinkan, jalankan perintah tes (contoh: \`npm run build\`).
+7. LANGKAH 4 (Selesai): Jika file sudah benar-benar dibuat/diedit, panggil \`finishTask\`.`;
 
 export class AgentSession {
   constructor(instruction, toolHandlers, onStatusUpdate) {
@@ -200,6 +202,23 @@ export class AgentSession {
           await this.onStatusUpdate(`🛠️ Memanggil tool: \`${name}\`...`);
 
           if (name === "finishTask") {
+            const status = execSync('git status --porcelain', { encoding: 'utf8' });
+            
+            if (args.hasModifications && !status.trim()) {
+              console.log("Validasi GAGAL: Agen mengklaim ada modifikasi, tapi git status kosong. Membatalkan finishTask.");
+              toolResponses.push({
+                functionResponse: {
+                  name,
+                  response: { 
+                    success: false, 
+                    error: "TUGAS BELUM SELESAI! Kamu mengklaim telah melakukan modifikasi (hasModifications: true), tetapi tidak ada file yang dibuat atau diedit. Kamu WAJIB memanggil writeFile untuk melakukan tugas coding sebelum memanggil finishTask. Jangan berhalusinasi!" 
+                  }
+                }
+              });
+              prompt = "System: Kamu mencoba menyelesaikan tugas dengan status hasModifications=true, tetapi tidak ada satupun file yang berubah. Silakan panggil tool writeFile terlebih dahulu!";
+              continue;
+            }
+
             isTaskFinished = true;
             finalResult = args;
             toolResponses.push({
