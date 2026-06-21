@@ -146,21 +146,25 @@ async function main() {
         .replace(/-+/g, '-');
       if (cleanBranchName.startsWith('-')) cleanBranchName = cleanBranchName.substring(1);
 
+      // Ambil origin URL asli (yang sudah valid dengan format owner/repo dari clone/create)
+      const originUrl = execSync('git config --get remote.origin.url', { encoding: 'utf8' }).trim();
+      const authUrl = originUrl.replace('https://github.com/', `https://x-access-token:${GLOBAL_WORKER_PAT}@github.com/`);
+
       if (cleanBranchName === 'main') {
         execFileSync('git', ['commit', '-m', commitMsg]);
-        execSync(`git push https://x-access-token:${GLOBAL_WORKER_PAT}@github.com/${TARGET_REPO}.git main`);
+        execSync(`git push ${authUrl} main`);
         await sendTelegramUpdate(`🚀 **Tugas Selesai!**\n\nPerubahan berhasil di-push langsung ke branch \`main\`!`);
       } else {
         execSync(`git checkout -b ${cleanBranchName}`);
         execFileSync('git', ['commit', '-m', commitMsg]);
-        execSync(`git push https://x-access-token:${GLOBAL_WORKER_PAT}@github.com/${TARGET_REPO}.git ${cleanBranchName}`);
+        execSync(`git push ${authUrl} ${cleanBranchName}`);
 
         let finalPrBody = prBody || `🤖 **Kokoa Dev Agent Report**\n\n**Original Instruction:**\n${safeInstruction}`;
         if (!finalPrBody.includes('Original Instruction')) {
           finalPrBody += `\n\n---\n🤖 **Kokoa Dev Agent Report**\n**Original Instruction:**\n${safeInstruction}`;
         }
 
-        execSync(`gh pr create --repo "${TARGET_REPO}" --title "${prTitle || 'Auto-fix'}" --body "${finalPrBody}" --head "${cleanBranchName}" --base main`);
+        execSync(`gh pr create --title "${prTitle || 'Auto-fix'}" --body "${finalPrBody}" --head "${cleanBranchName}" --base main`);
 
         await sendTelegramUpdate(`🚀 **Tugas Selesai!**\n\nBranch baru \`${cleanBranchName}\` berhasil dibuat dan Pull Request telah dikirim ke \`main\`!`);
       }
