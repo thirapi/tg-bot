@@ -103,9 +103,10 @@ PENTING:
 1. Pahami instruksi user dengan baik.
 2. Eksplorasi codebase secara bertahap menggunakan listDirectory dan readFile. Jangan menebak-nebak isi file.
 3. Edit kode menggunakan writeFile.
-4. SELALU jalankan runCommand('npm run build') atau perintah verifikasi lainnya setelah melakukan perubahan kode, untuk memastikan kode tidak error.
-5. Jika error, perbaiki dan build lagi.
-6. Jika sudah yakin 100% selesai dan build berhasil, panggil finishTask dengan argumen commit, branch, dan deskripsi PR yang relevan.`;
+4. KAMU SUDAH BERADA DI DALAM ROOT DIREKTORI REPOSITORI TARGET. JANGAN menjalankan 'mkdir <nama-repo>' atau 'git init'. Langsung buat atau edit file di *current directory* ('./').
+5. SELALU jalankan runCommand('npm run build') atau perintah verifikasi lainnya setelah melakukan perubahan kode, untuk memastikan kode tidak error.
+6. Jika error, perbaiki dan build lagi.
+7. Jika sudah yakin 100% selesai dan build berhasil, panggil finishTask dengan argumen commit, branch, dan deskripsi PR yang relevan.`;
 
 export class AgentSession {
   constructor(instruction, toolHandlers, onStatusUpdate) {
