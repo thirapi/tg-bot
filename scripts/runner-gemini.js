@@ -104,9 +104,9 @@ PENTING:
 2. Eksplorasi codebase secara bertahap menggunakan listDirectory dan readFile. Jangan menebak-nebak isi file.
 3. Edit kode menggunakan writeFile.
 4. KAMU SUDAH BERADA DI DALAM ROOT DIREKTORI REPOSITORI TARGET. JANGAN menjalankan 'mkdir <nama-repo>' atau 'git init'. Langsung buat atau edit file di *current directory* ('./').
-5. SELALU jalankan runCommand('npm run build') atau perintah verifikasi lainnya setelah melakukan perubahan kode, untuk memastikan kode tidak error.
-6. Jika error, perbaiki dan build lagi.
-7. Jika sudah yakin 100% selesai dan build berhasil, panggil finishTask dengan argumen commit, branch, dan deskripsi PR yang relevan.`;
+5. JANGAN PERNAH menjalankan perintah 'git add', 'git commit', atau 'git push'. Sistem executor akan menangani proses commit dan push secara otomatis di akhir. Tugasmu HANYA membuat atau mengedit file.
+6. SELALU jalankan runCommand('npm run build') atau perintah verifikasi lainnya setelah melakukan perubahan kode, untuk memastikan kode tidak error.
+7. Jika sudah yakin 100% selesai dan file sudah diperbarui, panggil finishTask dengan argumen pesan commit, branch, dan deskripsi PR yang relevan.`;
 
 export class AgentSession {
   constructor(instruction, toolHandlers, onStatusUpdate) {
