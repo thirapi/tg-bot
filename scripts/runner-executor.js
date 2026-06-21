@@ -29,13 +29,12 @@ async function sendTelegramUpdate(message) {
 }
 
 function normalizePath(p) {
-  // Prevent path traversal
   return path.normalize(p).replace(/^(\.\.(\/|\\|$))+/, '');
 }
 
 async function main() {
   const safeInstruction = String(INSTRUCTION || '');
-  
+
   if (GLOBAL_WORKER_PAT) {
     process.env.GITHUB_TOKEN = GLOBAL_WORKER_PAT;
     process.env.GH_TOKEN = GLOBAL_WORKER_PAT;
@@ -49,7 +48,7 @@ async function main() {
 
     console.log('Cloning...');
     if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
-    
+
     try {
       execSync(`git clone ${repoUrl} ${workDir}`, { stdio: 'pipe' });
       process.chdir(workDir);
@@ -58,20 +57,19 @@ async function main() {
       if (stderr.includes('not found')) {
         console.log(`Repo ${TARGET_REPO} tidak ditemukan. Membuat repo baru...`);
         await sendTelegramUpdate(`✨ Repositori \`${TARGET_REPO}\` belum ada. Aku akan buatkan yang baru untukmu...`);
-        
+
         fs.mkdirSync(workDir, { recursive: true });
         process.chdir(workDir);
         execSync('git init');
-        try { execSync('git checkout -b main'); } catch(e) {} // pastikan branch main
-        
+        try { execSync('git checkout -b main'); } catch (e) { }
+
         execSync('git config user.name "ccocoa"');
         execSync('git config user.email "270871570+ccocoa@users.noreply.github.com"');
 
         fs.writeFileSync('README.md', `# ${TARGET_REPO}\n\nRepository automatically created by Kokoa Dev Agent.`);
         execSync('git add README.md');
         execSync('git commit -m "chore: initial commit"');
-        
-        // Buat repo di GitHub dan push
+
         execSync(`gh repo create ${TARGET_REPO} --public --source=. --remote=origin --push`);
         await sendTelegramUpdate(`✅ Repositori \`${TARGET_REPO}\` berhasil dibuat! Melanjutkan instruksi...`);
       } else {
@@ -82,7 +80,6 @@ async function main() {
     execSync('git config user.name "ccocoa"');
     execSync('git config user.email "270871570+ccocoa@users.noreply.github.com"');
 
-    // Tool Handlers for the Agent
     const toolHandlers = {
       listDirectory: async ({ path: dirPath }) => {
         const safePath = normalizePath(dirPath || '.');
@@ -115,7 +112,7 @@ async function main() {
       },
       runCommand: async ({ command }) => {
         try {
-          const output = execSync(command, { encoding: 'utf8', stdio: 'pipe', timeout: 60000 }); // 60s timeout
+          const output = execSync(command, { encoding: 'utf8', stdio: 'pipe', timeout: 60000 });
           return `[SUCCESS]\n${output}`;
         } catch (error) {
           return `[ERROR]\nstdout: ${error.stdout || ''}\nstderr: ${error.stderr || ''}`;
@@ -123,10 +120,7 @@ async function main() {
       }
     };
 
-    // Initialize Agent
     const agent = new AgentSession(safeInstruction, toolHandlers, async (statusMsg) => {
-      // Kita kirim pesan status kalau perlu, tapi untuk menghindari spam, mungkin batasi saja
-      // await sendTelegramUpdate(statusMsg);
     });
 
     console.log("Memulai Agent Loop...");
@@ -139,32 +133,37 @@ async function main() {
     console.log("Agent selesai. Mengecek perubahan git...");
     execSync('git add .');
     const status = execSync('git status --porcelain', { encoding: 'utf8' });
-    
+
     if (status.trim()) {
       const { commitMessage, branchName, prTitle, prBody } = result;
 
-      const commitMsg = commitMessage 
-        ? `${commitMessage}\n\nCo-authored-by: thirapi <132630759+thirapi@users.noreply.github.com>` 
+      const commitMsg = commitMessage
+        ? `${commitMessage}\n\nCo-authored-by: thirapi <132630759+thirapi@users.noreply.github.com>`
         : `feat: auto-fix instruction applied\n\nCo-authored-by: thirapi <132630759+thirapi@users.noreply.github.com>`;
 
-      // Bersihkan nama branch
       let cleanBranchName = (branchName || `auto-fix/${Date.now()}`)
         .replace(/[^a-zA-Z0-9-]/g, '-')
         .replace(/-+/g, '-');
       if (cleanBranchName.startsWith('-')) cleanBranchName = cleanBranchName.substring(1);
 
-      execSync(`git checkout -b ${cleanBranchName}`);
-      execFileSync('git', ['commit', '-m', commitMsg]);
-      execSync(`git push https://x-access-token:${GLOBAL_WORKER_PAT}@github.com/${TARGET_REPO}.git ${cleanBranchName}`);
+      if (cleanBranchName === 'main') {
+        execFileSync('git', ['commit', '-m', commitMsg]);
+        execSync(`git push https://x-access-token:${GLOBAL_WORKER_PAT}@github.com/${TARGET_REPO}.git main`);
+        await sendTelegramUpdate(`🚀 **Tugas Selesai!**\n\nPerubahan berhasil di-push langsung ke branch \`main\`!`);
+      } else {
+        execSync(`git checkout -b ${cleanBranchName}`);
+        execFileSync('git', ['commit', '-m', commitMsg]);
+        execSync(`git push https://x-access-token:${GLOBAL_WORKER_PAT}@github.com/${TARGET_REPO}.git ${cleanBranchName}`);
 
-      let finalPrBody = prBody || `🤖 **Kokoa Dev Agent Report**\n\n**Original Instruction:**\n${safeInstruction}`;
-      if (!finalPrBody.includes('Original Instruction')) {
-        finalPrBody += `\n\n---\n🤖 **Kokoa Dev Agent Report**\n**Original Instruction:**\n${safeInstruction}`;
+        let finalPrBody = prBody || `🤖 **Kokoa Dev Agent Report**\n\n**Original Instruction:**\n${safeInstruction}`;
+        if (!finalPrBody.includes('Original Instruction')) {
+          finalPrBody += `\n\n---\n🤖 **Kokoa Dev Agent Report**\n**Original Instruction:**\n${safeInstruction}`;
+        }
+
+        execSync(`gh pr create --repo "${TARGET_REPO}" --title "${prTitle || 'Auto-fix'}" --body "${finalPrBody}" --head "${cleanBranchName}" --base main`);
+
+        await sendTelegramUpdate(`🚀 **Tugas Selesai!**\n\nBranch baru \`${cleanBranchName}\` berhasil dibuat dan Pull Request telah dikirim ke \`main\`!`);
       }
-
-      execSync(`gh pr create --repo "${TARGET_REPO}" --title "${prTitle || 'Auto-fix'}" --body "${finalPrBody}" --head "${cleanBranchName}" --base main`);
-
-      await sendTelegramUpdate(`🚀 **Tugas Selesai!**\n\nBranch baru \`${cleanBranchName}\` berhasil dibuat dan Pull Request telah dikirim ke \`main\`!`);
     } else {
       await sendTelegramUpdate(`Selesai! Agent merasa tidak ada kode yang perlu diubah.`);
     }

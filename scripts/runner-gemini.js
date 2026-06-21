@@ -111,11 +111,11 @@ export class AgentSession {
   constructor(instruction, toolHandlers, onStatusUpdate) {
     this.instruction = instruction;
     this.toolHandlers = toolHandlers;
-    this.onStatusUpdate = onStatusUpdate || (async () => {});
-    
+    this.onStatusUpdate = onStatusUpdate || (async () => { });
+
     const keys = (process.env.GEMINI_API_KEYS || "").split(",").map(k => k.trim()).filter(k => k);
     const models = (process.env.GEMINI_MODELS || "gemini-3.1-flash-lite,gemini-3.5-flash,gemini-3-flash-preview").split(",").map(m => m.trim());
-    
+
     this.keys = keys;
     this.models = models;
     this.chat = null;
@@ -128,9 +128,9 @@ export class AgentSession {
       if (blacklistedModels.has(modelName)) continue;
       const availableKeys = this.keys.filter(k => !blacklistedKeys.has(k));
       if (availableKeys.length === 0) continue;
-      
+
       const shuffledKeys = shuffle([...availableKeys]);
-      
+
       for (const key of shuffledKeys) {
         try {
           const genAI = new GoogleGenerativeAI(key);
@@ -139,7 +139,7 @@ export class AgentSession {
             systemInstruction: systemInstruction,
             tools: toolsDefinition
           });
-          
+
           this.chat = model.startChat({
             history: [],
             generationConfig: {
@@ -147,7 +147,7 @@ export class AgentSession {
               maxOutputTokens: 8192
             }
           });
-          
+
           this.modelName = modelName;
           this.key = key;
           console.log(`Agent initialized with ${modelName}`);
@@ -162,13 +162,13 @@ export class AgentSession {
 
   async start() {
     if (!this.chat) await this._initChat();
-    
+
     let isTaskFinished = false;
     let finalResult = null;
     let prompt = `INSTRUKSI USER: ${this.instruction}\n\nLakukan tugas ini secara bertahap menggunakan tools.`;
 
     let loopCount = 0;
-    const MAX_LOOPS = 25; // Cegah infinite loop
+    const MAX_LOOPS = 25;
 
     while (!isTaskFinished && loopCount < MAX_LOOPS) {
       loopCount++;
@@ -176,7 +176,7 @@ export class AgentSession {
         console.log(`\n--- Agent Loop ${loopCount} ---`);
         const result = await this.chat.sendMessage([{ text: prompt }]);
         const response = result.response;
-        
+
         const textOutput = response.text();
         if (textOutput) {
           console.log(`Agent Thought: ${textOutput.substring(0, 200)}...`);
@@ -207,7 +207,7 @@ export class AgentSession {
                 response: { success: true, message: "Task ditandai selesai." }
               }
             });
-            break; 
+            break;
           }
 
           if (this.toolHandlers[name]) {
@@ -242,15 +242,16 @@ export class AgentSession {
           break;
         }
 
-        // Send tool responses back to Gemini
+
         const toolResult = await this.chat.sendMessage(toolResponses);
         prompt = toolResult.response.text() || "Lanjutkan ke langkah berikutnya.";
-        
+
       } catch (err) {
         console.error(`Error in loop:`, err.message);
         const msg = err.message || "";
         if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("503")) {
-          // Switch key logic goes here if needed, for simplicity we just pass the error back
+          console.log("Menunggu 15 detik karena rate limit API...");
+          await new Promise(resolve => setTimeout(resolve, 15000));
           prompt = `Terjadi API error (rate limit / timeout): ${msg}. Silakan coba lagi.`;
         } else {
           prompt = `Terjadi error tak terduga: ${msg}. Coba gunakan cara lain.`;
