@@ -1,5 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { execSync } from "child_process";
+import fs from "fs";
+import path from "path";
 
 const shuffle = (array) => {
   for (let i = array.length - 1; i > 0; i--) {
@@ -107,8 +109,10 @@ PENTING - BACA DENGAN SEKSAMA:
 3. JANGAN PERNAH memanggil \`finishTask\` jika kamu belum melakukan modifikasi kode menggunakan \`writeFile\`.
 4. KAMU SUDAH DI ROOT REPO. Langsung buat file di direktori \`./\` (JANGAN gunakan \`mkdir\` atau \`git init\`).
 5. JANGAN PERNAH gunakan \`git add\`, \`git commit\`, atau \`git push\`. Executor akan melakukannya otomatis.
-6. LANGKAH 3 (Verifikasi): Jika memungkinkan, jalankan perintah tes (contoh: \`npm run build\`).
-7. LANGKAH 4 (Selesai): Jika file sudah benar-benar dibuat/diedit, panggil \`finishTask\`.`;
+6. JANGAN PERNAH menulis atau mengedit file (terutama berkas konfigurasi panjang atau workflow GitHub Actions) menggunakan tool \`runCommand\` (seperti \`echo "..." > file\`). Gunakan selalu tool \`writeFile\` untuk mencegah pemotongan karakter atau error interpretasi shell (bad substitution).
+7. Perintah \`cd\` di dalam \`runCommand\` tidak bersifat persisten ke pemanggilan tool berikutnya. Jika kamu perlu menjalankan perintah di direktori lain, gabungkan dengan operator '&&' (contoh: \`cd folder && npm run build\`).
+8. LANGKAH 3 (Verifikasi): Jika memungkinkan, jalankan perintah tes (contoh: \`npm run build\`).
+9. LANGKAH 4 (Selesai): Jika seluruh instruksi user sudah diimplementasikan dan diverifikasi, panggil \`finishTask\`.`;
 
 export class AgentSession {
   constructor(instruction, toolHandlers, onStatusUpdate) {
@@ -117,7 +121,7 @@ export class AgentSession {
     this.onStatusUpdate = onStatusUpdate || (async () => { });
 
     const keys = (process.env.GEMINI_API_KEYS || "").split(",").map(k => k.trim()).filter(k => k);
-    const models = (process.env.GEMINI_MODELS || "gemini-3.1-flash-lite,gemini-3.5-flash,gemini-3-flash-preview").split(",").map(m => m.trim());
+    const models = (process.env.GEMINI_MODELS || "gemini-3.5-flash,gemini-3-flash-preview,gemini-3.1-flash-lite").split(",").map(m => m.trim());
 
     this.keys = keys;
     this.models = models;
@@ -163,22 +167,73 @@ export class AgentSession {
     throw new Error("Gagal menginisialisasi Gemini Agent dengan semua kombinasi key/model.");
   }
 
+  async validateTaskCompletion() {
+    try {
+      const status = execSync('git status --porcelain', { encoding: 'utf8' }).trim();
+      const gitDiff = execSync('git diff', { encoding: 'utf8' }).trim();
+
+      const prompt = `Kamu adalah sistem validator independen. Tugasmu adalah memeriksa apakah Agen Pengembang (Kokoa Dev Agent) telah menyelesaikan instruksi pengguna secara lengkap dan benar.
+
+Instruksi Pengguna:
+"${this.instruction}"
+
+Status Git Workspace Saat Ini (git status):
+${status || "(tidak ada perubahan file)"}
+
+Detail Perubahan (git diff):
+${gitDiff.substring(0, 10000) || "(tidak ada perbedaan/file baru)"}
+
+Analisis apakah seluruh file, konfigurasi, dan modifikasi yang diminta atau tersirat dalam instruksi pengguna telah diimplementasikan dengan benar.
+Khususnya, pastikan tidak ada file utama yang terlewat (misal: jika diminta membuat landing page React, pastikan file index.html atau App.jsx/App.tsx benar-benar dibuat dan diubah, bukan hanya file style/css saja).
+Pastikan juga konfigurasi eksternal (seperti GitHub Actions workflow jika diminta) sudah dibuat dengan lengkap.
+
+Format keluaran kamu harus berupa JSON dengan skema berikut:
+{
+  "isComplete": boolean,
+  "reason": "Penjelasan detail mengapa belum lengkap, sebutkan file atau bagian kode yang kurang jika isComplete bernilai false. Jika isComplete bernilai true, berikan penjelasan singkat keberhasilan."
+}`;
+
+      const genAI = new GoogleGenerativeAI(this.key);
+      const model = genAI.getGenerativeModel({
+        model: this.modelName,
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.1,
+        }
+      });
+
+      const result = await model.generateContent(prompt);
+      const responseText = result.response.text();
+      const validation = JSON.parse(responseText);
+      return validation;
+    } catch (error) {
+      console.error("Gagal menjalankan validasi LLM:", error);
+      const status = execSync('git status --porcelain', { encoding: 'utf8' }).trim();
+      return {
+        isComplete: !!status,
+        reason: status ? "Validasi LLM gagal, menggunakan fallback git status." : "Tidak ada perubahan terdeteksi di git status."
+      };
+    }
+  }
+
   async start() {
     if (!this.chat) await this._initChat();
 
     let isTaskFinished = false;
     let finalResult = null;
-    let prompt = `INSTRUKSI USER: ${this.instruction}\n\nLakukan tugas ini secara bertahap menggunakan tools.`;
+    let nextMessage = `INSTRUKSI USER: ${this.instruction}\n\nLakukan tugas ini secara bertahap menggunakan tools.`;
 
     let loopCount = 0;
     const MAX_LOOPS = 25;
+
+    console.log(`\n--- Agent Loop Start ---`);
+    let result = await this.chat.sendMessage([{ text: nextMessage }]);
+    let response = result.response;
 
     while (!isTaskFinished && loopCount < MAX_LOOPS) {
       loopCount++;
       try {
         console.log(`\n--- Agent Loop ${loopCount} ---`);
-        const result = await this.chat.sendMessage([{ text: prompt }]);
-        const response = result.response;
 
         const textOutput = response.text();
         if (textOutput) {
@@ -188,11 +243,14 @@ export class AgentSession {
         const functionCalls = response.functionCalls();
         if (!functionCalls || functionCalls.length === 0) {
           console.log("Agent tidak memanggil tool apa-apa. Memberikan peringatan...");
-          prompt = "Kamu belum memanggil tool apapun. Tolong gunakan tool yang tersedia untuk mengeksplorasi file, menulis kode, atau panggil finishTask jika sudah selesai.";
+          const nudge = "Kamu belum memanggil tool apapun. Tolong gunakan tool yang tersedia untuk mengeksplorasi file, menulis kode, atau panggil finishTask jika sudah selesai.";
+          const res = await this.chat.sendMessage([{ text: nudge }]);
+          response = res.response;
           continue;
         }
 
         const toolResponses = [];
+        let finishTaskCall = null;
 
         for (const call of functionCalls) {
           const { name, args } = call;
@@ -202,32 +260,8 @@ export class AgentSession {
           await this.onStatusUpdate(`🛠️ Memanggil tool: \`${name}\`...`);
 
           if (name === "finishTask") {
-            const status = execSync('git status --porcelain', { encoding: 'utf8' });
-            
-            if (args.hasModifications && !status.trim()) {
-              console.log("Validasi GAGAL: Agen mengklaim ada modifikasi, tapi git status kosong. Membatalkan finishTask.");
-              toolResponses.push({
-                functionResponse: {
-                  name,
-                  response: { 
-                    success: false, 
-                    error: "TUGAS BELUM SELESAI! Kamu mengklaim telah melakukan modifikasi (hasModifications: true), tetapi tidak ada file yang dibuat atau diedit. Kamu WAJIB memanggil writeFile untuk melakukan tugas coding sebelum memanggil finishTask. Jangan berhalusinasi!" 
-                  }
-                }
-              });
-              prompt = "System: Kamu mencoba menyelesaikan tugas dengan status hasModifications=true, tetapi tidak ada satupun file yang berubah. Silakan panggil tool writeFile terlebih dahulu!";
-              continue;
-            }
-
-            isTaskFinished = true;
-            finalResult = args;
-            toolResponses.push({
-              functionResponse: {
-                name,
-                response: { success: true, message: "Task ditandai selesai." }
-              }
-            });
-            break;
+            finishTaskCall = { name, args };
+            continue;
           }
 
           if (this.toolHandlers[name]) {
@@ -258,13 +292,51 @@ export class AgentSession {
           }
         }
 
-        if (isTaskFinished) {
-          break;
+        if (finishTaskCall) {
+          const { name, args } = finishTaskCall;
+          console.log("Menjalankan validasi LLM dinamis untuk finishTask...");
+
+          const status = execSync('git status --porcelain', { encoding: 'utf8' }).trim();
+          if (args.hasModifications && !status) {
+            console.log("Validasi GAGAL: Agen mengklaim ada modifikasi, tapi git status kosong.");
+            toolResponses.push({
+              functionResponse: {
+                name,
+                response: {
+                  success: false,
+                  error: "TUGAS BELUM SELESAI! Kamu mengklaim telah melakukan modifikasi (hasModifications: true), tetapi tidak ada file yang dibuat atau diedit di git status. Kamu WAJIB memanggil writeFile untuk melakukan tugas coding sebelum memanggil finishTask."
+                }
+              }
+            });
+          } else {
+            const validation = await this.validateTaskCompletion();
+            if (!validation.isComplete) {
+              console.log(`Validasi GAGAL: ${validation.reason}`);
+              toolResponses.push({
+                functionResponse: {
+                  name,
+                  response: {
+                    success: false,
+                    error: `TUGAS BELUM LENGKAP! Berdasarkan analisis repositori: ${validation.reason}. Silakan selesaikan sisa tugas sebelum memanggil finishTask kembali.`
+                  }
+                }
+              });
+            } else {
+              console.log("Validasi SUKSES! Mengakhiri tugas.");
+              isTaskFinished = true;
+              finalResult = args;
+              toolResponses.push({
+                functionResponse: {
+                  name,
+                  response: { success: true, message: "Task ditandai selesai." }
+                }
+              });
+            }
+          }
         }
 
-
         const toolResult = await this.chat.sendMessage(toolResponses);
-        prompt = toolResult.response.text() || "Lanjutkan ke langkah berikutnya.";
+        response = toolResult.response;
 
       } catch (err) {
         console.error(`Error in loop:`, err.message);
@@ -272,9 +344,11 @@ export class AgentSession {
         if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("503")) {
           console.log("Menunggu 15 detik karena rate limit API...");
           await new Promise(resolve => setTimeout(resolve, 15000));
-          prompt = `Terjadi API error (rate limit / timeout): ${msg}. Silakan coba lagi.`;
+          const res = await this.chat.sendMessage([{ text: `Terjadi API error (rate limit / timeout): ${msg}. Silakan coba lagi.` }]);
+          response = res.response;
         } else {
-          prompt = `Terjadi error tak terduga: ${msg}. Coba gunakan cara lain.`;
+          const res = await this.chat.sendMessage([{ text: `Terjadi error tak terduga: ${msg}. Coba gunakan cara lain.` }]);
+          response = res.response;
         }
       }
     }
@@ -286,4 +360,5 @@ export class AgentSession {
 
     return finalResult;
   }
+
 }
