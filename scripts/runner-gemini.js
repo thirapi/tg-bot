@@ -120,14 +120,13 @@ export class AgentSession {
     this.onStatusUpdate = onStatusUpdate || (async () => { });
 
     const keys = (process.env.GEMINI_API_KEYS || "").split(",").map(k => k.trim()).filter(k => k);
-    
-    // Prioritas model yang diutamakan oleh Kokoa runner
+
     const modelPriority = [
       "gemini-3.5-flash",
       "gemini-3-flash-preview",
       "gemini-3.1-flash-lite"
     ];
-    
+
     const rawModels = (process.env.GEMINI_MODELS || "gemini-3.5-flash,gemini-3-flash-preview,gemini-3.1-flash-lite").split(",").map(m => m.trim());
     const sortedModels = rawModels.sort((a, b) => {
       let idxA = modelPriority.indexOf(a);
@@ -186,7 +185,6 @@ export class AgentSession {
 
   async validateTaskCompletion() {
     try {
-      // Stage untracked files sebagai intent-to-add agar muncul di git diff
       try {
         execSync('git add -N .', { encoding: 'utf8' });
       } catch (e) {
@@ -257,9 +255,8 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
           console.log(`Menambahkan combo ${this.key.substring(0, 5)}:${this.modelName} ke blacklist.`);
           blacklistedCombos.add(`${this.key}:${this.modelName}`);
 
-          const history = this.chat ? [...this.chat.history] : [];
+          const history = this.chat ? await this.chat.getHistory() : [];
           if (history.length > 0 && history[history.length - 1].role === 'user') {
-            console.log("Menghapus turn user yang belum terkirim dari history...");
             history.pop();
           }
 
@@ -298,6 +295,8 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
       loopCount++;
       try {
         console.log(`\n--- Agent Loop ${loopCount} ---`);
+
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
         const textOutput = response.text();
         if (textOutput) {
