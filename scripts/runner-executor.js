@@ -80,6 +80,42 @@ async function main() {
     execSync('git config user.name "ccocoa"');
     execSync('git config user.email "270871570+ccocoa@users.noreply.github.com"');
 
+    function ensureDefaultGitignore() {
+      const gitignorePath = '.gitignore';
+      const defaults = [
+        'node_modules/',
+        'dist/',
+        'build/',
+        '.next/',
+        '.astro/',
+        '.nuxt/',
+        'out/',
+        '*.log',
+        '.DS_Store',
+        '.env',
+        '.env.local',
+        '.env.production',
+        '.env.development'
+      ];
+
+      let currentContent = '';
+      if (fs.existsSync(gitignorePath)) {
+        currentContent = fs.readFileSync(gitignorePath, 'utf8');
+      }
+
+      const lines = currentContent.split('\n').map(l => l.trim());
+      const toAdd = defaults.filter(item => !lines.includes(item));
+
+      if (toAdd.length > 0) {
+        console.log('Menambahkan aturan default ke .gitignore...');
+        const appendText = (currentContent && !currentContent.endsWith('\n') ? '\n' : '') +
+          '\n# Default ignores added by Kokoa Executor\n' +
+          toAdd.join('\n') + '\n';
+        fs.appendFileSync(gitignorePath, appendText, 'utf8');
+      }
+    }
+    ensureDefaultGitignore();
+
     const toolHandlers = {
       listDirectory: async ({ path: dirPath }) => {
         const safePath = normalizePath(dirPath || '.');
@@ -156,7 +192,6 @@ async function main() {
         .replace(/-+/g, '-');
       if (cleanBranchName.startsWith('-')) cleanBranchName = cleanBranchName.substring(1);
 
-      // Ambil origin URL asli (yang sudah valid dengan format owner/repo dari clone/create)
       const originUrl = execSync('git config --get remote.origin.url', { encoding: 'utf8' }).trim();
       const authUrl = originUrl.replace('https://github.com/', `https://x-access-token:${GLOBAL_WORKER_PAT}@github.com/`);
 
