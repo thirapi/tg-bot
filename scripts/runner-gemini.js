@@ -121,23 +121,14 @@ export class AgentSession {
 
     const keys = (process.env.GEMINI_API_KEYS || "").split(",").map(k => k.trim()).filter(k => k);
 
-    const modelPriority = [
-      "gemini-3.5-flash",
-      "gemini-3-flash-preview",
-      "gemini-3.1-flash-lite"
-    ];
-
-    const rawModels = (process.env.GEMINI_MODELS || "gemini-3.5-flash,gemini-3-flash-preview,gemini-3.1-flash-lite").split(",").map(m => m.trim());
-    const sortedModels = rawModels.sort((a, b) => {
-      let idxA = modelPriority.indexOf(a);
-      let idxB = modelPriority.indexOf(b);
-      if (idxA === -1) idxA = 999;
-      if (idxB === -1) idxB = 999;
-      return idxA - idxB;
-    });
+    // Memakai urutan murni dari env tanpa melakukan sortasi paksa berdasarkan modelPriority
+    const rawModels = (process.env.GEMINI_MODELS || "gemini-3.1-flash-lite,gemini-3-flash-preview,gemini-3.5-flash")
+      .split(",")
+      .map(m => m.trim())
+      .filter(m => m);
 
     this.keys = keys;
-    this.models = sortedModels;
+    this.models = rawModels;
     this.chat = null;
     this.modelName = null;
     this.key = null;
@@ -266,7 +257,13 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
 
           const cleanHistory = rawHistory.map(h => ({
             role: h.role,
-            parts: h.parts.map(p => ({ text: p.text || "" })).filter(p => p.text)
+            parts: h.parts.map(p => {
+              const cleanedPart = {};
+              if (p.text !== undefined) cleanedPart.text = p.text;
+              if (p.functionCall !== undefined) cleanedPart.functionCall = p.functionCall;
+              if (p.functionResponse !== undefined) cleanedPart.functionResponse = p.functionResponse;
+              return Object.keys(cleanedPart).length > 0 ? cleanedPart : null;
+            }).filter(Boolean)
           })).filter(h => h.parts.length > 0);
 
           if (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].role === 'user') {
