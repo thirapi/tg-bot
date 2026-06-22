@@ -143,7 +143,7 @@ export class AgentSession {
     this.key = null;
   }
 
-  async _initChat() {
+  async _initChat(history = []) {
     for (const modelName of this.models) {
       if (blacklistedModels.has(modelName)) continue;
       const availableKeys = this.keys.filter(k => !blacklistedKeys.has(k));
@@ -161,7 +161,7 @@ export class AgentSession {
           });
 
           this.chat = model.startChat({
-            history: [],
+            history: history,
             generationConfig: {
               temperature: 0.1,
               maxOutputTokens: 8192
@@ -235,6 +235,43 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
     }
   }
 
+  async _sendWithRetry(messageInput) {
+    let attempts = 0;
+    const maxAttempts = 5;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      try {
+        const result = await this.chat.sendMessage(messageInput);
+        return result.response;
+      } catch (err) {
+        const msg = err.message || "";
+        const isRateLimit = msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("503") || msg.includes("quota");
+
+        if (isRateLimit && attempts < maxAttempts) {
+          console.log(`[Rate Limit / API Error] Gagal menggunakan ${this.modelName} dengan key ${this.key.substring(0, 5)}: ${msg}`);
+          console.log(`Menambahkan key ${this.key.substring(0, 5)}... ke blacklist.`);
+          blacklistedKeys.add(this.key);
+
+          const history = this.chat ? this.chat.history : [];
+          console.log("Menunggu 5 detik sebelum rotasi key/model...");
+          await new Promise(resolve => setTimeout(resolve, 5000));
+
+          try {
+            await this._initChat(history);
+            console.log(`Rotasi sukses. Melakukan percobaan ulang (${attempts}/${maxAttempts})...`);
+            continue;
+          } catch (rotateErr) {
+            console.error("Gagal melakukan rotasi key/model:", rotateErr.message);
+          }
+        }
+
+        throw err;
+      }
+    }
+    throw new Error("Gagal mengirim pesan setelah beberapa kali percobaan rotasi key/model.");
+  }
+
   async start() {
     if (!this.chat) await this._initChat();
 
@@ -246,8 +283,7 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
     const MAX_LOOPS = 25;
 
     console.log(`\n--- Agent Loop Start ---`);
-    let result = await this.chat.sendMessage([{ text: nextMessage }]);
-    let response = result.response;
+    let response = await this._sendWithRetry([{ text: nextMessage }]);
 
     while (!isTaskFinished && loopCount < MAX_LOOPS) {
       loopCount++;
@@ -263,8 +299,7 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
         if (!functionCalls || functionCalls.length === 0) {
           console.log("Agent tidak memanggil tool apa-apa. Memberikan peringatan...");
           const nudge = "Kamu belum memanggil tool apapun. Tolong gunakan tool yang tersedia untuk mengeksplorasi file, menulis kode, atau panggil finishTask jika sudah selesai.";
-          const res = await this.chat.sendMessage([{ text: nudge }]);
-          response = res.response;
+          response = await this._sendWithRetry([{ text: nudge }]);
           continue;
         }
 
@@ -354,20 +389,15 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
           }
         }
 
-        const toolResult = await this.chat.sendMessage(toolResponses);
-        response = toolResult.response;
+        response = await this._sendWithRetry(toolResponses);
 
       } catch (err) {
         console.error(`Error in loop:`, err.message);
-        const msg = err.message || "";
-        if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("503")) {
-          console.log("Menunggu 15 detik karena rate limit API...");
-          await new Promise(resolve => setTimeout(resolve, 15000));
-          const res = await this.chat.sendMessage([{ text: `Terjadi API error (rate limit / timeout): ${msg}. Silakan coba lagi.` }]);
-          response = res.response;
-        } else {
-          const res = await this.chat.sendMessage([{ text: `Terjadi error tak terduga: ${msg}. Coba gunakan cara lain.` }]);
-          response = res.response;
+        try {
+          response = await this._sendWithRetry([{ text: `Terjadi error tak terduga: ${err.message}. Coba gunakan cara lain.` }]);
+        } catch (innerErr) {
+          console.error("Gagal memulihkan dari error tak terduga:", innerErr.message);
+          throw err;
         }
       }
     }
@@ -379,5 +409,4 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
 
     return finalResult;
   }
-
 }
