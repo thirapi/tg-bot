@@ -1,7 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { execSync } from "child_process";
-import fs from "fs";
-import path from "path";
 
 const shuffle = (array) => {
   for (let i = array.length - 1; i > 0; i--) {
@@ -121,10 +119,25 @@ export class AgentSession {
     this.onStatusUpdate = onStatusUpdate || (async () => { });
 
     const keys = (process.env.GEMINI_API_KEYS || "").split(",").map(k => k.trim()).filter(k => k);
-    const models = (process.env.GEMINI_MODELS || "gemini-3.5-flash,gemini-3-flash-preview,gemini-3.1-flash-lite").split(",").map(m => m.trim());
+    
+    // Prioritas model yang diutamakan oleh Kokoa runner
+    const modelPriority = [
+      "gemini-3.5-flash",
+      "gemini-3-flash-preview",
+      "gemini-3.1-flash-lite"
+    ];
+    
+    const rawModels = (process.env.GEMINI_MODELS || "gemini-3.5-flash,gemini-3-flash-preview,gemini-3.1-flash-lite").split(",").map(m => m.trim());
+    const sortedModels = rawModels.sort((a, b) => {
+      let idxA = modelPriority.indexOf(a);
+      let idxB = modelPriority.indexOf(b);
+      if (idxA === -1) idxA = 999;
+      if (idxB === -1) idxB = 999;
+      return idxA - idxB;
+    });
 
     this.keys = keys;
-    this.models = models;
+    this.models = sortedModels;
     this.chat = null;
     this.modelName = null;
     this.key = null;
@@ -169,6 +182,12 @@ export class AgentSession {
 
   async validateTaskCompletion() {
     try {
+      // Stage untracked files sebagai intent-to-add agar muncul di git diff
+      try {
+        execSync('git add -N .', { encoding: 'utf8' });
+      } catch (e) {
+        console.warn("Gagal menjalankan git add -N:", e.message);
+      }
       const status = execSync('git status --porcelain', { encoding: 'utf8' }).trim();
       const gitDiff = execSync('git diff', { encoding: 'utf8' }).trim();
 
