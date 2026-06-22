@@ -104,14 +104,15 @@ Kamu memiliki akses langsung ke sistem file lokal melalui tools:
 
 PENTING - BACA DENGAN SEKSAMA:
 1. LANGKAH 1 (Eksplorasi): Gunakan \`listDirectory\` dan \`readFile\` untuk memahami isi proyek.
-2. LANGKAH 2 (Eksekusi): Kamu WAJIB menggunakan tool \`writeFile\` untuk membuat atau mengedit file sesuai instruksi user. Jangan berhalusinasi telah membuat file jika kamu belum memanggil tool ini.
-3. JANGAN PERNAH memanggil \`finishTask\` jika kamu belum melakukan modifikasi kode menggunakan \`writeFile\`.
-4. KAMU SUDAH DI ROOT REPO. Langsung buat file di direktori \`./\` (JANGAN gunakan \`mkdir\` atau \`git init\`).
-5. JANGAN PERNAH gunakan \`git add\`, \`git commit\`, atau \`git push\`. Executor akan melakukannya otomatis.
-6. JANGAN PERNAH menulis atau mengedit file (terutama berkas konfigurasi panjang atau workflow GitHub Actions) menggunakan tool \`runCommand\` (seperti \`echo "..." > file\`). Gunakan selalu tool \`writeFile\` untuk mencegah pemotongan karakter atau error interpretasi shell (bad substitution).
-7. Perintah \`cd\` di dalam \`runCommand\` tidak bersifat persisten ke pemanggilan tool berikutnya. Jika kamu perlu menjalankan perintah di direktori lain, gabungkan dengan operator '&&' (contoh: \`cd folder && npm run build\`).
-8. LANGKAH 3 (Verifikasi): Jika memungkinkan, jalankan perintah tes (contoh: \`npm run build\`).
-9. LANGKAH 4 (Selesai): Jika seluruh instruksi user sudah diimplementasikan dan diverifikasi, panggil \`finishTask\`.`;
+2. JANGAN PERNAH menginstal dependensi atau melakukan build (seperti Vite, Astro, React, Next.js) sebelum kamu memastikan adanya file \`.gitignore\`. Jika \`.gitignore\` belum ada atau belum mengeklusi \`node_modules\`, \`dist\`, \`build\`, \`.next\`, \`.astro\`, \`.nuxt\`, \`out\`, atau file log, kamu WAJIB membuat atau memperbaruinya terlebih dahulu menggunakan tool \`writeFile\`.
+3. LANGKAH 2 (Eksekusi): Kamu WAJIB menggunakan tool \`writeFile\` untuk membuat atau mengedit file sesuai instruksi user. Jangan berhalusinasi telah membuat file jika kamu belum memanggil tool ini.
+4. JANGAN PERNAH memanggil \`finishTask\` jika kamu belum melakukan modifikasi kode menggunakan \`writeFile\`.
+5. KAMU SUDAH DI ROOT REPO. Langsung buat file di direktori \`./\` (JANGAN gunakan \`mkdir\` atau \`git init\`).
+6. JANGAN PERNAH gunakan \`git add\`, \`git commit\`, atau \`git push\`. Executor akan melakukannya otomatis.
+7. JANGAN PERNAH menulis atau mengedit file (terutama berkas konfigurasi panjang atau workflow GitHub Actions) menggunakan tool \`runCommand\` (seperti \`echo "..." > file\`). Gunakan selalu tool \`writeFile\` untuk mencegah pemotongan karakter atau error interpretasi shell (bad substitution).
+8. Perintah \`cd\` di dalam \`runCommand\` tidak bersifat persisten ke pemanggilan tool berikutnya. Jika kamu perlu menjalankan perintah di direktori lain, gabungkan dengan operator '&&' (contoh: \`cd folder && npm run build\`).
+9. LANGKAH 3 (Verifikasi): Jika memungkinkan, jalankan perintah tes (contoh: \`npm run build\`).
+10. LANGKAH 4 (Selesai): Jika seluruh instruksi user sudah diimplementasikan dan diverifikasi, panggil \`finishTask\`.`;
 
 export class AgentSession {
   constructor(instruction, toolHandlers, onStatusUpdate) {
@@ -121,7 +122,6 @@ export class AgentSession {
 
     const keys = (process.env.GEMINI_API_KEYS || "").split(",").map(k => k.trim()).filter(k => k);
 
-    // Memakai urutan murni dari env tanpa melakukan sortasi paksa berdasarkan modelPriority
     const rawModels = (process.env.GEMINI_MODELS || "gemini-3.1-flash-lite,gemini-3-flash-preview,gemini-3.5-flash")
       .split(",")
       .map(m => m.trim())
