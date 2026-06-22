@@ -100,7 +100,7 @@ Kamu memiliki akses langsung ke sistem file lokal melalui tools:
 - writeFile: untuk menulis / menimpa file.
 - deleteFile: untuk menghapus file.
 - runCommand: untuk menjalankan perintah shell seperti 'npm install', 'npm run build', 'tsc --noEmit', atau 'grep'.
-- finishTask: panggil ini HANYA jika semua tugas sudah selesai, kode sudah terverifikasi (build sukses), dan siap di-commit.
+- finishTask: panggil ini HANYA jika semua tugas sudah selesai, kode sudah verifikasi (build sukses), dan siap di-commit.
 
 PENTING - BACA DENGAN SEKSAMA:
 1. LANGKAH 1 (Eksplorasi): Gunakan \`listDirectory\` dan \`readFile\` untuk memahami isi proyek.
@@ -255,16 +255,29 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
           console.log(`Menambahkan combo ${this.key.substring(0, 5)}:${this.modelName} ke blacklist.`);
           blacklistedCombos.add(`${this.key}:${this.modelName}`);
 
-          const history = this.chat ? await this.chat.getHistory() : [];
-          if (history.length > 0 && history[history.length - 1].role === 'user') {
-            history.pop();
+          let rawHistory = [];
+          if (this.chat) {
+            try {
+              rawHistory = await this.chat.getHistory();
+            } catch (histErr) {
+              rawHistory = [];
+            }
           }
 
-          console.log("Menunggu 5 detik sebelum rotasi key/model...");
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          const cleanHistory = rawHistory.map(h => ({
+            role: h.role,
+            parts: h.parts.map(p => ({ text: p.text || "" })).filter(p => p.text)
+          })).filter(h => h.parts.length > 0);
+
+          if (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].role === 'user') {
+            cleanHistory.pop();
+          }
+
+          console.log("Menunggu 10 detik sebelum rotasi key/model...");
+          await new Promise(resolve => setTimeout(resolve, 10000));
 
           try {
-            await this._initChat(history);
+            await this._initChat(cleanHistory);
             console.log(`Rotasi sukses. Melakukan percobaan ulang (${attempts}/${maxAttempts})...`);
             continue;
           } catch (rotateErr) {
