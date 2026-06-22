@@ -11,6 +11,7 @@ const shuffle = (array) => {
 
 const blacklistedKeys = new Set();
 const blacklistedModels = new Set();
+const blacklistedCombos = new Set();
 
 const toolsDefinition = [
   {
@@ -152,6 +153,9 @@ export class AgentSession {
       const shuffledKeys = shuffle([...availableKeys]);
 
       for (const key of shuffledKeys) {
+        const comboId = `${key}:${modelName}`;
+        if (blacklistedCombos.has(comboId)) continue;
+
         try {
           const genAI = new GoogleGenerativeAI(key);
           const model = genAI.getGenerativeModel({
@@ -250,10 +254,15 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
 
         if (isRateLimit && attempts < maxAttempts) {
           console.log(`[Rate Limit / API Error] Gagal menggunakan ${this.modelName} dengan key ${this.key.substring(0, 5)}: ${msg}`);
-          console.log(`Menambahkan key ${this.key.substring(0, 5)}... ke blacklist.`);
-          blacklistedKeys.add(this.key);
+          console.log(`Menambahkan combo ${this.key.substring(0, 5)}:${this.modelName} ke blacklist.`);
+          blacklistedCombos.add(`${this.key}:${this.modelName}`);
 
-          const history = this.chat ? this.chat.history : [];
+          const history = this.chat ? [...this.chat.history] : [];
+          if (history.length > 0 && history[history.length - 1].role === 'user') {
+            console.log("Menghapus turn user yang belum terkirim dari history...");
+            history.pop();
+          }
+
           console.log("Menunggu 5 detik sebelum rotasi key/model...");
           await new Promise(resolve => setTimeout(resolve, 5000));
 
