@@ -44,7 +44,7 @@ export async function handleWebhook(request, env, ctx) {
         await sendTelegramMessage(
           env.TELEGRAM_BOT_TOKEN,
           chatId,
-          "Oke, memorinya udah aku hapus ya. Sekarang kita mulai obrolan baru lagi, mau bahas apa nih?",
+          "oke, memorinya udh aku hapus ya. yuk kita mulai obrolan baru lagi, mau bahas apa nih?",
         );
       })());
       return new Response("OK", { status: 200 });
@@ -54,12 +54,12 @@ export async function handleWebhook(request, env, ctx) {
       ctx.waitUntil((async () => {
         await env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 });
         const helpMsg =
-          "<b>Bisa apa aja?</b>\n" +
-          "/start atau /reset - Hapus memori biar kita mulai dari awal lagi\n" +
-          "/help - Lihat daftar ini\n" +
-          "/unblock - Reset status blacklist dan lock jika bot stuck\n" +
-          "/quota atau /keys - Cek sisa kuota dan status API Key\n\n" +
-          "Selain ngobrol santai, aku juga bisa bantu kamu cek issue di GitHub, review PR, atau liat-liat foto dan dengerin pesan suara kamu. Kasih tau aja ya!";
+          "<b>bisa apa aja?</b>\n" +
+          "/start atau /reset - hapus memori biar kita mulai dr awal lagi\n" +
+          "/help - lihat daftar ini\n" +
+          "/unblock - reset status blacklist dan lock kalo bot stuck\n" +
+          "/quota atau /keys - cek sisa kuota dan status API Key\n\n" +
+          "selain ngobrol santai, aku jg bisa bantu kamu cek issue di GitHub, review PR, atau liat-liat foto dan dengerin voice note kamu. kasih tau aja ya!";
         await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, helpMsg);
       })());
       return new Response("OK", { status: 200 });
@@ -78,11 +78,11 @@ export async function handleWebhook(request, env, ctx) {
           await sendTelegramMessage(
             env.TELEGRAM_BOT_TOKEN,
             chatId,
-            "✅ Semua status blacklist/cooldown API Key dan kunci pemrosesan (lock) di memori sistem (KV) telah dihapus! Bot siap menerima pesan baru.",
+            "✅ semua status blacklist/cooldown API Key dan lock di KV udh dihapus ya! aku siap nerima pesan baru",
           );
         } catch (err) {
           console.error("Unblock Error:", err);
-          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Aduh, gagal reset blacklist nih.");
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "aduh, gagal reset blacklist nih...");
         }
       })());
       return new Response("OK", { status: 200 });
@@ -92,12 +92,12 @@ export async function handleWebhook(request, env, ctx) {
       ctx.waitUntil((async () => {
         try {
           await env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 });
-          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Sip, tunggu bentar ya! Aku cek dulu status semua API Key dan modelnya...");
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "sip, tunggu bentar ya! aku cek dulu status semua API Key sama modelnya...");
           const quotaStatus = await checkGeminiQuota(env);
           await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, quotaStatus);
         } catch (err) {
           console.error("Quota Check Error:", err);
-          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Aduh, ada error pas lagi cek quota. Coba lagi nanti ya!");
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "aduh, ada eror pas lagi cek kuota. coba lagi nanti ya!");
         }
       })());
       return new Response("OK", { status: 200 });
@@ -119,7 +119,7 @@ export async function handleWebhook(request, env, ctx) {
       ctx.waitUntil(sendTelegramMessage(
         env.TELEGRAM_BOT_TOKEN,
         chatId,
-        "Eh, sebentar ya! Aku masih proses yang tadi, tunggu bentar lagi ya.",
+        "eh sebentar ya! aku masih proses chat yg tadi nih, tunggu bentar lagi yaa",
       ));
       return new Response("OK", { status: 200 });
     }

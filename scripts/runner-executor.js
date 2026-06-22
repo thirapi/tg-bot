@@ -40,7 +40,7 @@ async function main() {
     process.env.GH_TOKEN = GLOBAL_WORKER_PAT;
   }
 
-  await sendTelegramUpdate(`🛠 **Agent Kokoa Dev Aktif!**\n\nRepo: \`${TARGET_REPO}\`\n\n*Menganalisis instruksi:* ${safeInstruction}\nAku akan mengeksplorasi kode dan mencari cara terbaik...`);
+  await sendTelegramUpdate(`🛠 **kokoa dev agent aktif!**\n\nrepo: \`${TARGET_REPO}\`\n\n*analisis instruksi:* ${safeInstruction}\naku mulai explore kode dan cari cara terbaik ya...`);
 
   try {
     const workDir = path.join(process.cwd(), 'target_workspace');
@@ -56,7 +56,7 @@ async function main() {
       const stderr = (error.stderr || '').toString();
       if (stderr.includes('not found')) {
         console.log(`Repo ${TARGET_REPO} tidak ditemukan. Membuat repo baru...`);
-        await sendTelegramUpdate(`✨ Repositori \`${TARGET_REPO}\` belum ada. Aku akan buatkan yang baru untukmu...`);
+        await sendTelegramUpdate(`✨ repo \`${TARGET_REPO}\` belum ada nih. aku buatkan yg baru dulu ya...`);
 
         fs.mkdirSync(workDir, { recursive: true });
         process.chdir(workDir);
@@ -71,7 +71,7 @@ async function main() {
         execSync('git commit -m "chore: initial commit"');
 
         execSync(`gh repo create ${TARGET_REPO} --public --source=. --remote=origin --push`);
-        await sendTelegramUpdate(`✅ Repositori \`${TARGET_REPO}\` berhasil dibuat! Melanjutkan instruksi...`);
+        await sendTelegramUpdate(`✅ repo \`${TARGET_REPO}\` udh berhasil dibuat! lanjut ngerjain instruksi ya...`);
       } else {
         throw error;
       }
@@ -198,7 +198,7 @@ async function main() {
       if (cleanBranchName === 'main') {
         execFileSync('git', ['commit', '-m', commitMsg]);
         execSync(`git push ${authUrl} main`);
-        await sendTelegramUpdate(`🚀 **Tugas Selesai!**\n\nPerubahan berhasil di-push langsung ke branch \`main\`!`);
+        await sendTelegramUpdate(`🚀 **tugas selesai!**\n\nperubahan udah berhasil aku push langsung ke branch \`main\` ya!`);
       } else {
         execSync(`git checkout -b ${cleanBranchName}`);
         execFileSync('git', ['commit', '-m', commitMsg]);
@@ -211,15 +211,15 @@ async function main() {
 
         execSync(`gh pr create --title "${prTitle || 'Auto-fix'}" --body "${finalPrBody}" --head "${cleanBranchName}" --base main`);
 
-        await sendTelegramUpdate(`🚀 **Tugas Selesai!**\n\nBranch baru \`${cleanBranchName}\` berhasil dibuat dan Pull Request telah dikirim ke \`main\`!`);
+        await sendTelegramUpdate(`🚀 **tugas selesai!**\n\nbranch baru \`${cleanBranchName}\` udh dibuat dan pull request-nya juga udh aku kirim ke \`main\`!`);
       }
     } else {
-      await sendTelegramUpdate(`Selesai! Agent merasa tidak ada kode yang perlu diubah.`);
+      await sendTelegramUpdate(`selesai! kayaknya ga ada kode yg perlu diubah deh.`);
     }
 
   } catch (error) {
     console.error('Fatal Error:', error);
-    await sendTelegramUpdate(`Waduh, Agent mengalami kendala:\n\`${error.message}\``);
+    await sendTelegramUpdate(`waduh, kokoa dapet kendala nih:\n\`${error.message}\``);
     process.exit(1);
   }
 }

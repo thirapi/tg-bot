@@ -55,7 +55,7 @@ export async function processMessage(message, env) {
       await sendTelegramMessage(
         env.TELEGRAM_BOT_TOKEN,
         chatId,
-        "Aduh, maaf ya, aku kurang ngerti maksudnya. Coba kirim teks, foto, atau suara gitu biar aku paham!",
+        "aduh, sori ya ga ngerti maksudnya... coba kirim teks, foto, atau voice note aja biar aku paham!",
       );
       return;
     }
@@ -95,7 +95,7 @@ export async function processMessage(message, env) {
 
       if (Date.now() - startTime > EXECUTION_TIMEOUT) {
         throw new Error(
-          "Duh, maaf ya, prosesnya terlalu lama dan hampir melebihi limit Cloudflare Workers. Coba pecah pertanyaannya biar lebih simpel ya!",
+          "duh, sori ya prosesnya kelamaan nih, keburu kehabisan batas waktu. coba pecah pertanyaannya biar lebih simpel aja ya!",
         );
       }
 
@@ -105,7 +105,7 @@ export async function processMessage(message, env) {
       let activeModels = models.filter((m) => !blacklistedModels.has(m));
       if (activeModels.length === 0) {
         throw new Error(
-          "Seluruh model Gemini tidak dapat digunakan (terkena blacklist atau limit).",
+          "duh, semua model gemini lagi eror atau kena limit nih. coba beberapa saat lagi ya",
         );
       }
 
@@ -145,7 +145,7 @@ export async function processMessage(message, env) {
             globalFailures++;
 
             if (globalFailures >= 3) {
-              throw new Error("Sistem Google AI sedang mengalami gangguan berat berturut-turut. Coba kirim ulang pesan beberapa saat lagi ya!");
+              throw new Error("server google ai lagi down parah nih. coba kirim ulang chatnya bentar lagi ya!");
             }
 
             if (err.message.includes("503") || err.message.includes("UNAVAILABLE")) {
@@ -209,7 +209,7 @@ export async function processMessage(message, env) {
               toolErr.message.includes("Resource not accessible")
             ) {
               throw new Error(
-                "Gagal menjalankan tool karena masalah otentikasi (403/401). Mohon periksa token API/PAT GitHub!",
+                "gagal jalanin tool karena masalah otentikasi (403/401). coba cek token api/pat github kamu ya!",
               );
             }
             result = { error: toolErr.message };
@@ -265,7 +265,7 @@ export async function processMessage(message, env) {
       await sendTelegramMessage(
         env.TELEGRAM_BOT_TOKEN,
         chatId,
-        "Tugasnya udah aku jalanin ya! Tapi aku nggak dapet respons teks penutup dari sistem nih. Coba cek repo kamu, harusnya kodenya udah ke-update!",
+        "tugasnya udah aku jalanin ya! tp aku ga dapet respons teks penutup dr sistem. coba cek repo kamu deh, harusnya kodenya udh ke-update",
       );
     }
   } catch (err) {
@@ -273,7 +273,7 @@ export async function processMessage(message, env) {
     await sendTelegramMessage(
       env.TELEGRAM_BOT_TOKEN,
       chatId,
-      `Yah, kok ada error ya... ${err.message}. Coba kirim lagi ya, moga-moga habis ini lancar!`,
+      `yah eror... ${err.message}. coba kirim lagi ya, moga abis ini lancar!`,
     );
   } finally {
     isProcessing = false;
