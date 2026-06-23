@@ -209,7 +209,13 @@ async function main() {
           finalPrBody += `\n\n---\n🤖 **Kokoa Dev Agent Report**\n**Original Instruction:**\n${safeInstruction}`;
         }
 
-        execSync(`gh pr create --title "${prTitle || 'Auto-fix'}" --body "${finalPrBody}" --head "${cleanBranchName}" --base main`);
+        execFileSync('gh', [
+          'pr', 'create',
+          '--title', prTitle || 'Auto-fix',
+          '--body', finalPrBody,
+          '--head', cleanBranchName,
+          '--base', 'main'
+        ], { encoding: 'utf8' });
 
         await sendTelegramUpdate(`🚀 **tugas selesai!**\n\nbranch baru \`${cleanBranchName}\` udh dibuat dan pull request-nya juga udh aku kirim ke \`main\`!`);
       }
