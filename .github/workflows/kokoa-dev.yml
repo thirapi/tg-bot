@@ -29,4 +29,5 @@ jobs:
           GEMINI_MODELS: ${{ vars.GEMINI_MODELS }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           WORKER_URL: ${{ github.event.client_payload.worker_url }}
+          MODE: ${{ github.event.client_payload.mode }}
         run: node scripts/runner-executor.js

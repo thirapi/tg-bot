@@ -130,19 +130,22 @@ export async function executeTool(name, args, env, chatId) {
     }
     case "triggerDeveloperWorkflow": {
       const dispatchEndpoint = `repos/thirapi/tg-bot/dispatches`;
+      const mode = args.mode || "code";
       const body = {
         event_type: "kokoa-dev-task",
         client_payload: {
           target_repo: args.target_repo,
           instruction: args.instruction,
+          mode,
           chat_id: chatId,
           worker_url: env.WORKER_URL || "",
         },
       };
       await callGitHubAPI(env, dispatchEndpoint, "POST", body);
-      return {
-        message: "Workflow pengembangan berhasil dipicu di GitHub Actions. Proses ini akan berjalan di latar belakang (Ubuntu Runner). Aku akan memberikan notifikasi setelah tugas selesai atau jika ada perkembangan lebih lanjut.",
-      };
+      const msg = mode === "analysis"
+        ? "oke, aku kirim tim analis ke repo itu ya. nanti hasilnya aku kirim ke sini kalo udah selesai!"
+        : "Workflow pengembangan berhasil dipicu di GitHub Actions. Proses ini akan berjalan di latar belakang (Ubuntu Runner). Aku akan memberikan notifikasi setelah tugas selesai atau jika ada perkembangan lebih lanjut.";
+      return { message: msg };
     }
     case "checkWorkflowStatus": {
       const runsEndpoint = `repos/${args.owner}/${args.repo}/actions/runs?event=repository_dispatch&per_page=3`;

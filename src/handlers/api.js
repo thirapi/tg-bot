@@ -2,6 +2,19 @@ import { updateTaskStatus, setMemory } from "../db/index.js";
 
 const CALLBACK_TOKEN = "kokoa-runner-secret";
 
+async function sendTelegramMessage(botToken, chatId, text) {
+  const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" }),
+    });
+  } catch (e) {
+    console.error("TG send error:", e);
+  }
+}
+
 export async function handleAPI(request, env, ctx) {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -35,6 +48,18 @@ export async function handleAPI(request, env, ctx) {
           if (data.key && data.value) {
             await setMemory(env, chat_id, data.key, data.value);
           }
+          break;
+        }
+        case "analysis_result": {
+          let analysis = data.analysis || "gak ada hasil analisis.";
+          const repo = data.repo || "";
+          const header = `**Analisis Repo: ${repo}**\n\n`;
+          const maxLen = 4000;
+          if (analysis.length + header.length > maxLen) {
+            analysis = analysis.substring(0, maxLen - header.length - 100) + `\n\n... *(laporan dipotong, terlalu panjang)*`;
+          }
+          const msg = header + analysis;
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chat_id, msg);
           break;
         }
         default:

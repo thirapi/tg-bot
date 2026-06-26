@@ -75,24 +75,25 @@ const toolsDefinition = [
       },
       {
         name: "finishTask",
-        description: "Panggil ini saat semua perbaikan kode dan build sudah selesai dilakukan. Ini akan mentrigger proses commit dan Pull Request.",
+        description: "Panggil ini setelah semua tugas selesai. Di mode 'analysis': isi parameter analysis dengan laporan. Di mode 'code': ini akan trigger commit dan PR.",
         parameters: {
           type: "OBJECT",
           properties: {
-            commitMessage: { type: "STRING", description: "Pesan commit yang sesuai." },
-            branchName: { type: "STRING", description: "Nama branch (gunakan strip, bukan spasi)." },
-            prTitle: { type: "STRING", description: "Judul Pull Request." },
-            prBody: { type: "STRING", description: "Deskripsi Pull Request." },
-            hasModifications: { type: "BOOLEAN", description: "Set ke true jika kamu telah melakukan perubahan file menggunakan writeFile. Set ke false jika tidak ada file yang perlu diubah (misal karena kode sudah benar)." }
+            commitMessage: { type: "STRING", description: "Pesan commit (opsional di mode analysis)." },
+            branchName: { type: "STRING", description: "Nama branch (opsional di mode analysis)." },
+            prTitle: { type: "STRING", description: "Judul Pull Request (opsional di mode analysis)." },
+            prBody: { type: "STRING", description: "Deskripsi Pull Request atau laporan singkat (opsional di mode analysis)." },
+            hasModifications: { type: "BOOLEAN", description: "Set ke true jika ada perubahan file. Di mode code, ini WAJIB true kecuali emang gak ada yg perlu diubah. Di mode analysis, selalu false." },
+            analysis: { type: "STRING", description: "Mode analysis: laporan analisis lengkap. Mode code: gausa diisi." }
           },
-          required: ["commitMessage", "branchName", "prTitle", "prBody", "hasModifications"]
+          required: ["hasModifications"]
         }
       }
     ]
   }
 ];
 
-const systemInstruction = `Kamu adalah Senior Software Engineer (Kokoa Dev Agent) yang berjalan di dalam GitHub Actions Ubuntu Runner.
+const codeModeInstruction = `Kamu adalah Senior Software Engineer (Kokoa Dev Agent) yang berjalan di dalam GitHub Actions Ubuntu Runner.
 Tugasmu adalah memperbaiki kode, menambahkan fitur, atau memecahkan masalah berdasarkan instruksi user.
 
 Kamu memiliki akses langsung ke sistem file lokal melalui tools:
@@ -117,11 +118,35 @@ PENTING - BACA DENGAN SEKSAMA:
 11. LANGKAH 4 (Selesai): Jika seluruh instruksi user sudah diimplementasikan dan diverifikasi, panggil \`finishTask\`.
 12. JIKA VALIDASI GAGAL 2 KALI: baca ulang file yang bermasalah, perbaiki, lalu coba finishTask lagi. Jika masih gagal, coba finishTask dengan hasModifications=true (force) — lebih baik push partial daripada stuck selamanya.`;
 
+const analysisModeInstruction = `Kamu adalah Senior Code Analyst (Kokoa Analysis Agent) yang berjalan di dalam GitHub Actions Ubuntu Runner. Tugasmu adalah MEMBACA dan MENGANALISIS kode — BUKAN menulis atau memperbaikinya.
+
+Kamu memiliki akses ke tools:
+- listDirectory: melihat isi folder.
+- readFile: membaca file.
+- runCommand: menjalankan perintah shell untuk eksplorasi (grep, find, git log, dll).
+- finishTask: panggil ini dengan \`analysis\` berisi laporan lengkap hasil analisismu.
+
+ATURAN PENTING:
+1. JANGAN PERNAH menggunakan \`writeFile\` atau \`deleteFile\` — kamu hanya boleh MEMBACA, bukan menulis.
+2. JANGAN PERNAH memodifikasi file apapun.
+3. Fokus pada pemahaman arsitektur, struktur folder, alur data, dependensi, dan pola kode.
+4. Gunakan \`listDirectory\` untuk navigasi, \`readFile\` untuk baca isi file, \`runCommand\` untuk grep/find/git log.
+5. KAMU SUDAH DI ROOT REPO. Tidak perlu clone atau init.
+6. JANGAN gunakan \`git add/commit/push\` — executor tidak akan menjalankannya di mode ini.
+7. Setelah selesai menganalisis, panggil \`finishTask\` dengan parameter \`analysis\` berisi laporan mendalam. Sertakan juga \`hasModifications: false\`.
+8. Laporan analisis harus mencakup: struktur proyek, alur kerja/flow, arsitektur, dependensi, potensi masalah, dan rekomendasi konkret.
+9. Kamu bisa mencari file spesifik dengan \`runCommand("find . -name '*.js' | head -30")\` atau \`runCommand("grep -r 'import' src/ --include='*.js' | head -50")\`.`;
+
+function buildSystemInstruction(isAnalysisMode) {
+  return isAnalysisMode ? analysisModeInstruction : codeModeInstruction;
+}
+
 export class AgentSession {
-  constructor(instruction, toolHandlers, onStatusUpdate) {
+  constructor(instruction, toolHandlers, onStatusUpdate, analysisMode = false) {
     this.instruction = instruction;
     this.toolHandlers = toolHandlers;
     this.onStatusUpdate = onStatusUpdate || (async () => { });
+    this.analysisMode = analysisMode;
 
     const keys = (process.env.GEMINI_API_KEYS || "").split(",").map(k => k.trim()).filter(k => k);
 
@@ -153,7 +178,7 @@ export class AgentSession {
           const genAI = new GoogleGenerativeAI(key);
           const model = genAI.getGenerativeModel({
             model: modelName,
-            systemInstruction: systemInstruction,
+            systemInstruction: buildSystemInstruction(this.analysisMode),
             tools: toolsDefinition
           });
 
@@ -373,64 +398,77 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
 
         if (finishTaskCall) {
           const { name, args } = finishTaskCall;
-          console.log("Menjalankan validasi LLM dinamis untuk finishTask...");
 
-          const status = execSync('git status --porcelain', { encoding: 'utf8' }).trim();
-          if (args.hasModifications && !status) {
-            console.log("Validasi GAGAL: Agen mengklaim ada modifikasi, tapi git status kosong.");
+          if (this.analysisMode) {
+            console.log("Mode analysis: langsung selesai tanpa validasi git.");
+            isTaskFinished = true;
+            finalResult = args;
             toolResponses.push({
               functionResponse: {
                 name,
-                response: {
-                  success: false,
-                  error: "TUGAS BELUM SELESAI! Kamu mengklaim telah melakukan modifikasi (hasModifications: true), tetapi tidak ada file yang dibuat atau diedit di git status. Kamu WAJIB memanggil writeFile untuk melakukan tugas coding sebelum memanggil finishTask."
-                }
+                response: { success: true, message: "Analisis selesai." }
               }
             });
           } else {
-            const validation = await this.validateTaskCompletion();
-            if (!validation.isComplete) {
-              validationFailCount++;
-              console.log(`Validasi GAGAL (ke-${validationFailCount}): ${validation.reason}`);
+            console.log("Menjalankan validasi LLM dinamis untuk finishTask...");
 
-              if (validationFailCount >= 2) {
-                console.log("Validasi gagal 2 kali. Force-finish dengan hasil yang ada...");
-                isTaskFinished = true;
-                finalResult = {
-                  ...args,
-                  commitMessage: args.commitMessage || "chore: partial changes",
-                  branchName: args.branchName || `auto-fix/${Date.now()}`,
-                  prTitle: args.prTitle || "Auto-fix (partial)",
-                  prBody: (args.prBody || "") + `\n\n⚠️ Catatan: tugas force-finish karena stuck setelah ${loopCount} langkah. Mungkin ada yang terlewat.`,
-                  hasModifications: args.hasModifications || !!lastNonFinishTool,
-                };
-                toolResponses.push({
-                  functionResponse: {
-                    name,
-                    response: { success: true, message: "Task dipaksa selesai (2x validasi gagal). Push partial changes." }
-                  }
-                });
-              } else {
-                toolResponses.push({
-                  functionResponse: {
-                    name,
-                    response: {
-                      success: false,
-                      error: `TUGAS BELUM LENGKAP! Berdasarkan analisis repositori: ${validation.reason}. Silakan selesaikan sisa tugas, terutama pastikan file besar ditulis dalam beberapa bagian (chunk) pakai append=true.`
-                    }
-                  }
-                });
-              }
-            } else {
-              console.log("Validasi SUKSES! Mengakhiri tugas.");
-              isTaskFinished = true;
-              finalResult = args;
+            const status = execSync('git status --porcelain', { encoding: 'utf8' }).trim();
+            if (args.hasModifications && !status) {
+              console.log("Validasi GAGAL: Agen mengklaim ada modifikasi, tapi git status kosong.");
               toolResponses.push({
                 functionResponse: {
                   name,
-                  response: { success: true, message: "Task ditandai selesai." }
+                  response: {
+                    success: false,
+                    error: "TUGAS BELUM SELESAI! Kamu mengklaim telah melakukan modifikasi (hasModifications: true), tetapi tidak ada file yang dibuat atau diedit di git status. Kamu WAJIB memanggil writeFile untuk melakukan tugas coding sebelum memanggil finishTask."
+                  }
                 }
               });
+            } else {
+              const validation = await this.validateTaskCompletion();
+              if (!validation.isComplete) {
+                validationFailCount++;
+                console.log(`Validasi GAGAL (ke-${validationFailCount}): ${validation.reason}`);
+
+                if (validationFailCount >= 2) {
+                  console.log("Validasi gagal 2 kali. Force-finish dengan hasil yang ada...");
+                  isTaskFinished = true;
+                  finalResult = {
+                    ...args,
+                    commitMessage: args.commitMessage || "chore: partial changes",
+                    branchName: args.branchName || `auto-fix/${Date.now()}`,
+                    prTitle: args.prTitle || "Auto-fix (partial)",
+                    prBody: (args.prBody || "") + `\n\n⚠️ Catatan: tugas force-finish karena stuck setelah ${loopCount} langkah. Mungkin ada yang terlewat.`,
+                    hasModifications: args.hasModifications || !!lastNonFinishTool,
+                  };
+                  toolResponses.push({
+                    functionResponse: {
+                      name,
+                      response: { success: true, message: "Task dipaksa selesai (2x validasi gagal). Push partial changes." }
+                    }
+                  });
+                } else {
+                  toolResponses.push({
+                    functionResponse: {
+                      name,
+                      response: {
+                        success: false,
+                        error: `TUGAS BELUM LENGKAP! Berdasarkan analisis repositori: ${validation.reason}. Silakan selesaikan sisa tugas, terutama pastikan file besar ditulis dalam beberapa bagian (chunk) pakai append=true.`
+                      }
+                    }
+                  });
+                }
+              } else {
+                console.log("Validasi SUKSES! Mengakhiri tugas.");
+                isTaskFinished = true;
+                finalResult = args;
+                toolResponses.push({
+                  functionResponse: {
+                    name,
+                    response: { success: true, message: "Task ditandai selesai." }
+                  }
+                });
+              }
             }
           }
         }

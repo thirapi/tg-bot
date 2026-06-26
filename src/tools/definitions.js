@@ -334,7 +334,7 @@ export const githubTools = [
       },
       {
         name: "triggerDeveloperWorkflow",
-        description: "DELEGASI tugas berat ke GitHub Actions. GUNAKAN INI KALO: (1) perlu cloning repo, (2) perlu jalanin npm/git/bash, (3) perlu bikin/ubah banyak file, (4) perlu build/compile/test kode, (5) butuh kerja lebih dari 30 detik. JANGAN gunakan untuk tugas simple yang bisa pake tool GitHub API biasa.",
+        description: "DELEGASI tugas ke GitHub Actions. mode 'code': clone repo, nulis/ubah kode, commit, dan buat PR. mode 'analysis': clone repo, baca file, analisis struktur/flow/arsitektur, lalu lapor hasilnya — TIDAK nulis/commit apapun.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -344,7 +344,12 @@ export const githubTools = [
             },
             instruction: {
               type: "STRING",
-              description: "Instruksi atau detail tugas penulisan/perbaikan kode yang harus dilakukan secara mendalam.",
+              description: "Untuk mode 'code': instruksi perbaikan/penulisan kode. Untuk mode 'analysis': instruksi analisis (misal: 'analisa arsitektur dan flow aplikasi ini').",
+            },
+            mode: {
+              type: "STRING",
+              description: "'code' (default): nulis kode, commit, PR. 'analysis': baca repo, analisis, lapor tanpa commit.",
+              enum: ["code", "analysis"],
             },
           },
           required: ["target_repo", "instruction"],

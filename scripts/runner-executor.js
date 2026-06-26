@@ -10,7 +10,10 @@ const {
   GLOBAL_WORKER_PAT,
   TELEGRAM_BOT_TOKEN,
   WORKER_URL,
+  MODE,
 } = process.env;
+
+const isAnalysisMode = MODE === "analysis";
 
 async function workerCallback(type, data) {
   if (!WORKER_URL) return;
@@ -57,7 +60,11 @@ async function main() {
     process.env.GH_TOKEN = GLOBAL_WORKER_PAT;
   }
 
-  await sendTelegramUpdate(`aku udah mulai ngerjain ya!\n\nrepo: \`${TARGET_REPO}\`\n\n${safeInstruction}`);
+  if (isAnalysisMode) {
+    await sendTelegramUpdate(`aku lagi baca repo \`${TARGET_REPO}\` nih, bentar ya...`);
+  } else {
+    await sendTelegramUpdate(`aku udah mulai ngerjain ya!\n\nrepo: \`${TARGET_REPO}\`\n\n${safeInstruction}`);
+  }
 
   try {
     const workDir = path.join(process.cwd(), 'target_workspace');
@@ -192,13 +199,24 @@ async function main() {
 
     const agent = new AgentSession(safeInstruction, toolHandlers, async (statusMsg) => {
       await sendTelegramUpdate(statusMsg);
-    });
+    }, isAnalysisMode);
 
-    console.log("Memulai Agent Loop...");
+    console.log(`Memulai Agent Loop (mode: ${isAnalysisMode ? 'analysis' : 'code'})...`);
     const result = await agent.start();
 
     if (!result) {
       throw new Error("Agent selesai tapi tidak memberikan result final.");
+    }
+
+    if (isAnalysisMode) {
+      const analysisText = result.analysis || result.prBody || "gak ada hasil analisis yang dikasih.";
+      await workerCallback("analysis_result", {
+        repo: TARGET_REPO,
+        instruction: safeInstruction,
+        analysis: analysisText,
+      });
+      await sendTelegramUpdate(`analisis untuk \`${TARGET_REPO}\` udah selesai!`);
+      return;
     }
 
     console.log("Agent selesai. Mengecek perubahan git...");
