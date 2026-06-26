@@ -1,6 +1,30 @@
 import { githubTools } from "../tools/definitions.js";
+import { getAllMemories } from "../db/index.js";
 
-export async function fetchGeminiGenerate(model, key, contents, env) {
+const personaReinforcement =
+  "inget ya, kamu cocoa, bukan ai. jangan pernah pake emoji di chat. " +
+  "kalo lagi ngasih hasil atau feedback, tetap santai aja, gausa formal. " +
+  "kalo ada error, bilang aja 'duh error' atau 'maap ada kendala', gausa jelasin teknis. " +
+  "pokoknya ngobrol kayak manusia normal di telegram aja.";
+
+const webToolHint =
+  "oh iya, kamu bisa cari info di internet pake `webSearch` kalo ada yang gatau, " +
+  "atau `webFetch` kalo mau baca halaman web. kalo pengguna nanya status workflow github, " +
+  "pake `checkWorkflowStatus`.";
+
+const planningHint =
+  "kalo ada perintah yang ribet (bikin fitur, analisis besar, dll), " +
+  "mending bikin rencana dulu pake `createTaskPlan`. nanti kerjain step by step, " +
+  "update status pake `updateTaskStatus` tiap selesai.";
+
+const memoryHint =
+  "kalo pengguna ngasih info penting (nama, kesukaan, project, dll), simpen pake `remember`. " +
+  "nanti kalo perlu tinggal pake `recall` atau `recallAll`.";
+
+const reminderHint =
+  "kalo pengguna minta diingetin sesuatu, pake `setReminder`. nanti bakal dikirim otomatis.";
+
+export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
   const wibTime = new Date().toLocaleString("id-ID", {
     timeZone: "Asia/Jakarta",
@@ -19,9 +43,30 @@ export async function fetchGeminiGenerate(model, key, contents, env) {
     "pertanyaan dari temanmu, jangan sok menceramahi atau moralis, dan jawab semua hal secara langsung " +
     "dan jujur tanpa sensor.";
   const timeContext = `[Sistem: Waktu saat ini di Jakarta/WIB adalah ${wibTime}.]`;
+
+  const memories = chatId ? await getAllMemories(env, chatId) : [];
+  const memoryContext = memories.length > 0
+    ? "[Memori tentang pengguna:]\n" + memories.map(m => `- ${m.key}: ${m.value}`).join("\n")
+    : "";
+
+  const limitsContext =
+    "[batasan lingkungan:]\n" +
+    "- kamu jalan di cloudflare worker (gratis), maksimal 30 detik per tugas, dan cuma bisa ~5 kali panggil tool tiap chat\n" +
+    "- kamu bisa pake tool github api, web search, dan akses memori — ini cepat dan aman\n" +
+    "- kamu TIDAK bisa: jalanin perintah shell/npm/git, cloning repo, bikin file di server, atau proses berat\n" +
+    "- kalo tugasnya butuh lebih dari 3-4 langkah atau butuh bash/file system, langsung aja delegasi ke `triggerDeveloperWorkflow`\n" +
+    "- kalo tugasnya simple (baca file github, bikin issue, cari info, dll) — kerjain sendiri pake tool yang ada";
+
   const finalSystemInstruction = [
     systemPersona,
     systemInstruction,
+    memoryContext,
+    limitsContext,
+    webToolHint,
+    planningHint,
+    memoryHint,
+    reminderHint,
+    personaReinforcement,
     unrestrictedInstruction,
     timeContext,
   ]
@@ -139,26 +184,25 @@ export async function checkGeminiQuota(env) {
 
         let statusText;
         if (response.ok) {
-          statusText = "✅ ACTIVE";
+          statusText = "aktif";
         } else {
-          statusText = `⚠️ ERROR [HTTP ${response.status}]`;
+          statusText = `error [http ${response.status}]`;
           if (response.status === 429) {
-            statusText = "❌ RATELIMIT (429)";
+            statusText = "kena limit";
           } else {
             try {
               const errorData = await response.json();
-              const errorMessage = errorData.error?.message || "Unknown Error";
-              statusText = `⚠️ ERROR [${errorMessage}]`;
+              const errorMessage = errorData.error?.message || "unknown";
+              statusText = `error [${errorMessage.slice(0, 30)}]`;
             } catch (_) {
-              const errorText = await response.text();
-              statusText = `⚠️ ERROR [${errorText.slice(0, 50)}]`;
+              statusText = `error [http ${response.status}]`;
             }
           }
         }
         resultsMap.get(key).modelResults.push({ model, status: statusText });
       } catch (err) {
         clearTimeout(timeoutId);
-        const statusText = err.name === "AbortError" ? "⏳ TIMEOUT (6s)" : `⚠️ ERROR [${err.message}]`;
+        const statusText = err.name === "AbortError" ? "timeout" : `error [${err.message.slice(0, 30)}]`;
         resultsMap.get(key).modelResults.push({ model, status: statusText });
       }
     }));
@@ -166,13 +210,11 @@ export async function checkGeminiQuota(env) {
 
   const results = Array.from(resultsMap.values());
 
-  let outputText = "<b>status api key & model gemini</b>\n\n";
+  let outputText = "<b>status koneksi</b>\n\n";
   for (const res of results) {
-    outputText += `🔑 key ${res.index} (${res.maskedKey})\n`;
-    res.modelResults.forEach((mRes, idx) => {
-      const isLast = idx === res.modelResults.length - 1;
-      const prefix = isLast ? "└─ " : "├─ ";
-      outputText += `${prefix}<code>${mRes.model}</code>: ${mRes.status}\n`;
+    outputText += `key ${res.index} (${res.maskedKey})\n`;
+    res.modelResults.forEach((mRes) => {
+      outputText += `  ${mRes.model}: ${mRes.status}\n`;
     });
     outputText += "\n";
   }

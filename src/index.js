@@ -1,5 +1,16 @@
 import { handleWebhook } from "./handlers/webhook.js";
+import { handleCron } from "./handlers/cron.js";
+import { handleAPI } from "./handlers/api.js";
 
 export default {
-  fetch: handleWebhook,
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith("/api/")) {
+      return handleAPI(request, env, ctx);
+    }
+    return handleWebhook(request, env, ctx);
+  },
+  async scheduled(event, env, ctx) {
+    await handleCron(event, env, ctx);
+  },
 };

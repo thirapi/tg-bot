@@ -40,12 +40,13 @@ const toolsDefinition = [
       },
       {
         name: "writeFile",
-        description: "Membuat baru atau menimpa isi file dengan teks baru.",
+        description: "MENULIS file baru atau MENIMPA file yang sudah ada. Untuk file BESAR (>2000 chars), tulis dalam beberapa bagian: panggil pertama dengan append=false (atau tanpa append dulu), lalu panggil berikutnya dengan append=true untuk menambahkan sisanya.",
         parameters: {
           type: "OBJECT",
           properties: {
             path: { type: "STRING", description: "Path lengkap ke file." },
-            content: { type: "STRING", description: "Isi file yang baru." }
+            content: { type: "STRING", description: "Isi file yang baru atau yang akan ditambahkan." },
+            append: { type: "BOOLEAN", description: "Set ke true untuk menambahkan ke file yang sudah ada (append mode). Default false (tulis dari awal)." }
           },
           required: ["path", "content"]
         }
@@ -97,7 +98,7 @@ Tugasmu adalah memperbaiki kode, menambahkan fitur, atau memecahkan masalah berd
 Kamu memiliki akses langsung ke sistem file lokal melalui tools:
 - listDirectory: untuk melihat isi folder.
 - readFile: untuk membaca file (lakukan ini dulu sebelum mengedit!).
-- writeFile: untuk menulis / menimpa file.
+- writeFile: untuk menulis / menimpa file. Untuk file BESAR, tulis dalam potongan (chunk) menggunakan parameter append=true.
 - deleteFile: untuk menghapus file.
 - runCommand: untuk menjalankan perintah shell seperti 'npm install', 'npm run build', 'tsc --noEmit', atau 'grep'.
 - finishTask: panggil ini HANYA jika semua tugas sudah selesai, kode sudah verifikasi (build sukses), dan siap di-commit.
@@ -112,7 +113,9 @@ PENTING - BACA DENGAN SEKSAMA:
 7. JANGAN PERNAH menulis atau mengedit file (terutama berkas konfigurasi panjang atau workflow GitHub Actions) menggunakan tool \`runCommand\` (seperti \`echo "..." > file\`). Gunakan selalu tool \`writeFile\` untuk mencegah pemotongan karakter atau error interpretasi shell (bad substitution).
 8. Perintah \`cd\` di dalam \`runCommand\` tidak bersifat persisten ke pemanggilan tool berikutnya. Jika kamu perlu menjalankan perintah di direktori lain, gabungkan dengan operator '&&' (contoh: \`cd folder && npm run build\`).
 9. LANGKAH 3 (Verifikasi): Jika memungkinkan, jalankan perintah tes (contoh: \`npm run build\`).
-10. LANGKAH 4 (Selesai): Jika seluruh instruksi user sudah diimplementasikan dan diverifikasi, panggil \`finishTask\`.`;
+10. MENULIS FILE BESAR: Parameter content di writeFile terbatas (~4000 chars). Untuk file besar, tulis dalam potongan: panggil writeFile pertama dengan append=false, lalu panggil writeFile berikutnya dengan append=true untuk menambahkan sisanya. Gunakan readFile untuk memverifikasi hasilnya.
+11. LANGKAH 4 (Selesai): Jika seluruh instruksi user sudah diimplementasikan dan diverifikasi, panggil \`finishTask\`.
+12. JIKA VALIDASI GAGAL 2 KALI: baca ulang file yang bermasalah, perbaiki, lalu coba finishTask lagi. Jika masih gagal, coba finishTask dengan hasModifications=true (force) — lebih baik push partial daripada stuck selamanya.`;
 
 export class AgentSession {
   constructor(instruction, toolHandlers, onStatusUpdate) {
@@ -296,7 +299,9 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
     let nextMessage = `INSTRUKSI USER: ${this.instruction}\n\nLakukan tugas ini secara bertahap menggunakan tools.`;
 
     let loopCount = 0;
-    const MAX_LOOPS = 25;
+    const MAX_LOOPS = 30;
+    let validationFailCount = 0;
+    let lastNonFinishTool = null;
 
     console.log(`\n--- Agent Loop Start ---`);
     let response = await this._sendWithRetry([{ text: nextMessage }]);
@@ -335,6 +340,8 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
             finishTaskCall = { name, args };
             continue;
           }
+
+          lastNonFinishTool = name;
 
           if (this.toolHandlers[name]) {
             try {
@@ -383,16 +390,37 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
           } else {
             const validation = await this.validateTaskCompletion();
             if (!validation.isComplete) {
-              console.log(`Validasi GAGAL: ${validation.reason}`);
-              toolResponses.push({
-                functionResponse: {
-                  name,
-                  response: {
-                    success: false,
-                    error: `TUGAS BELUM LENGKAP! Berdasarkan analisis repositori: ${validation.reason}. Silakan selesaikan sisa tugas sebelum memanggil finishTask kembali.`
+              validationFailCount++;
+              console.log(`Validasi GAGAL (ke-${validationFailCount}): ${validation.reason}`);
+
+              if (validationFailCount >= 2) {
+                console.log("Validasi gagal 2 kali. Force-finish dengan hasil yang ada...");
+                isTaskFinished = true;
+                finalResult = {
+                  ...args,
+                  commitMessage: args.commitMessage || "chore: partial changes",
+                  branchName: args.branchName || `auto-fix/${Date.now()}`,
+                  prTitle: args.prTitle || "Auto-fix (partial)",
+                  prBody: (args.prBody || "") + `\n\n⚠️ Catatan: tugas force-finish karena stuck setelah ${loopCount} langkah. Mungkin ada yang terlewat.`,
+                  hasModifications: args.hasModifications || !!lastNonFinishTool,
+                };
+                toolResponses.push({
+                  functionResponse: {
+                    name,
+                    response: { success: true, message: "Task dipaksa selesai (2x validasi gagal). Push partial changes." }
                   }
-                }
-              });
+                });
+              } else {
+                toolResponses.push({
+                  functionResponse: {
+                    name,
+                    response: {
+                      success: false,
+                      error: `TUGAS BELUM LENGKAP! Berdasarkan analisis repositori: ${validation.reason}. Silakan selesaikan sisa tugas, terutama pastikan file besar ditulis dalam beberapa bagian (chunk) pakai append=true.`
+                    }
+                  }
+                });
+              }
             } else {
               console.log("Validasi SUKSES! Mengakhiri tugas.");
               isTaskFinished = true;
@@ -422,7 +450,15 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
 
     if (!isTaskFinished) {
       console.log("Mencapai MAX_LOOPS tanpa finishTask.");
-      throw new Error("Agent mengambil terlalu banyak langkah dan dihentikan otomatis.");
+      const partial = {
+        commitMessage: "chore: partial changes from agent",
+        branchName: `auto-fix/${Date.now()}`,
+        prTitle: "Auto-fix (partial — max loops)",
+        prBody: `Agent berhenti setelah ${MAX_LOOPS} langkah (validasi gagal ${validationFailCount}x). Mungkin ada bagian yang terlewat.`,
+        hasModifications: true,
+      };
+      console.log("Force-finish dengan partial result...");
+      return partial;
     }
 
     return finalResult;

@@ -1,0 +1,10 @@
+node_modules/
+.wrangler/
+dist/
+build/
+.env
+.env.local
+.dev.vars
+*.log
+.DS_Store
+target_workspace/

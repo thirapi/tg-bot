@@ -8,8 +8,25 @@ const {
   INSTRUCTION,
   CHAT_ID,
   GLOBAL_WORKER_PAT,
-  TELEGRAM_BOT_TOKEN
+  TELEGRAM_BOT_TOKEN,
+  WORKER_URL,
 } = process.env;
+
+async function workerCallback(type, data) {
+  if (!WORKER_URL) return;
+  try {
+    await fetch(`${WORKER_URL}/api/runner-callback`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer kokoa-runner-secret",
+      },
+      body: JSON.stringify({ chat_id: CHAT_ID, type, data }),
+    });
+  } catch (e) {
+    console.error("Worker callback error:", e.message);
+  }
+}
 
 async function sendTelegramUpdate(message) {
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
@@ -40,7 +57,7 @@ async function main() {
     process.env.GH_TOKEN = GLOBAL_WORKER_PAT;
   }
 
-  await sendTelegramUpdate(`🛠 **kokoa dev agent aktif!**\n\nrepo: \`${TARGET_REPO}\`\n\n*analisis instruksi:* ${safeInstruction}\naku mulai explore kode dan cari cara terbaik ya...`);
+  await sendTelegramUpdate(`aku udah mulai ngerjain ya!\n\nrepo: \`${TARGET_REPO}\`\n\n${safeInstruction}`);
 
   try {
     const workDir = path.join(process.cwd(), 'target_workspace');
@@ -56,7 +73,7 @@ async function main() {
       const stderr = (error.stderr || '').toString();
       if (stderr.includes('not found')) {
         console.log(`Repo ${TARGET_REPO} tidak ditemukan. Membuat repo baru...`);
-        await sendTelegramUpdate(`✨ repo \`${TARGET_REPO}\` belum ada nih. aku buatkan yg baru dulu ya...`);
+        await sendTelegramUpdate(`repo \`${TARGET_REPO}\` belum ada nih. aku buatkan yang baru dulu ya...`);
 
         fs.mkdirSync(workDir, { recursive: true });
         process.chdir(workDir);
@@ -71,7 +88,7 @@ async function main() {
         execSync('git commit -m "chore: initial commit"');
 
         execSync(`gh repo create ${TARGET_REPO} --public --source=. --remote=origin --push`);
-        await sendTelegramUpdate(`✅ repo \`${TARGET_REPO}\` udh berhasil dibuat! lanjut ngerjain instruksi ya...`);
+        await sendTelegramUpdate(`repo \`${TARGET_REPO}\` udah berhasil dibuat! lanjut ngerjain instruksinya ya...`);
       } else {
         throw error;
       }
@@ -130,12 +147,19 @@ async function main() {
         if (!fs.existsSync(fullPath)) return `Error: File ${safePath} tidak ditemukan.`;
         return fs.readFileSync(fullPath, 'utf8');
       },
-      writeFile: async ({ path: filePath, content }) => {
+      writeFile: async ({ path: filePath, content, append }) => {
         const safePath = normalizePath(filePath);
         const fullPath = path.join(process.cwd(), safePath);
-        fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-        fs.writeFileSync(fullPath, content, 'utf8');
-        return `Sukses: File ${safePath} berhasil ditulis.`;
+        if (append) {
+          fs.appendFileSync(fullPath, content, 'utf8');
+          const stats = fs.statSync(fullPath);
+          return `Sukses: ${content.length} char ditambahkan ke ${safePath} (total ${stats.size} bytes).`;
+        } else {
+          fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+          fs.writeFileSync(fullPath, content, 'utf8');
+          const written = content.length;
+          return `Sukses: File ${safePath} berhasil ditulis (${written} chars).`;
+        }
       },
       deleteFile: async ({ path: filePath }) => {
         const safePath = normalizePath(filePath);
@@ -167,6 +191,7 @@ async function main() {
     };
 
     const agent = new AgentSession(safeInstruction, toolHandlers, async (statusMsg) => {
+      await sendTelegramUpdate(statusMsg);
     });
 
     console.log("Memulai Agent Loop...");
@@ -195,18 +220,27 @@ async function main() {
       const originUrl = execSync('git config --get remote.origin.url', { encoding: 'utf8' }).trim();
       const authUrl = originUrl.replace('https://github.com/', `https://x-access-token:${GLOBAL_WORKER_PAT}@github.com/`);
 
+      await workerCallback("memory", {
+        key: "last_workflow_repo",
+        value: TARGET_REPO,
+      });
+      await workerCallback("memory", {
+        key: "last_workflow_instruction",
+        value: safeInstruction,
+      });
+
       if (cleanBranchName === 'main') {
         execFileSync('git', ['commit', '-m', commitMsg]);
         execSync(`git push ${authUrl} main`);
-        await sendTelegramUpdate(`🚀 **tugas selesai!**\n\nperubahan udah berhasil aku push langsung ke branch \`main\` ya!`);
+        await sendTelegramUpdate(`selesai! perubahan udah langsung aku push ke branch \`main\` ya!`);
       } else {
         execSync(`git checkout -b ${cleanBranchName}`);
         execFileSync('git', ['commit', '-m', commitMsg]);
         execSync(`git push ${authUrl} ${cleanBranchName}`);
 
-        let finalPrBody = prBody || `🤖 **Kokoa Dev Agent Report**\n\n**Original Instruction:**\n${safeInstruction}`;
+        let finalPrBody = prBody || `**Kokoa Dev Agent Report**\n\n**Original Instruction:**\n${safeInstruction}`;
         if (!finalPrBody.includes('Original Instruction')) {
-          finalPrBody += `\n\n---\n🤖 **Kokoa Dev Agent Report**\n**Original Instruction:**\n${safeInstruction}`;
+          finalPrBody += `\n\n---\n**Kokoa Dev Agent Report**\n**Original Instruction:**\n${safeInstruction}`;
         }
 
         execFileSync('gh', [
@@ -217,15 +251,15 @@ async function main() {
           '--base', 'main'
         ], { encoding: 'utf8' });
 
-        await sendTelegramUpdate(`🚀 **tugas selesai!**\n\nbranch baru \`${cleanBranchName}\` udh dibuat dan pull request-nya juga udh aku kirim ke \`main\`!`);
+        await sendTelegramUpdate(`selesai! branch \`${cleanBranchName}\` udah dibuat sama pr-nya juga udah dikirim ke \`main\`!`);
       }
     } else {
-      await sendTelegramUpdate(`selesai! kayaknya ga ada kode yg perlu diubah deh.`);
+      await sendTelegramUpdate(`selesai! kayaknya ga ada kode yang perlu diubah deh.`);
     }
 
   } catch (error) {
     console.error('Fatal Error:', error);
-    await sendTelegramUpdate(`waduh, kokoa dapet kendala nih:\n\`${error.message}\``);
+    await sendTelegramUpdate(`waduh, ada kendala nih... coba liat log action github buat detailnya ya`);
     process.exit(1);
   }
 }

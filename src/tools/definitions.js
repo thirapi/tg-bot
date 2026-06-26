@@ -334,7 +334,7 @@ export const githubTools = [
       },
       {
         name: "triggerDeveloperWorkflow",
-        description: "Memicu workflow pengembangan berat di GitHub Actions untuk tugas seperti kloning repo, analisis file lokal mendalam, modifikasi kode masif, perbaikan error build/compile otomatis, hingga push dan PR. Gunakan ini jika tugas terlalu berat untuk dilakukan via API biasa atau terkena limitasi timeout.",
+        description: "DELEGASI tugas berat ke GitHub Actions. GUNAKAN INI KALO: (1) perlu cloning repo, (2) perlu jalanin npm/git/bash, (3) perlu bikin/ubah banyak file, (4) perlu build/compile/test kode, (5) butuh kerja lebih dari 30 detik. JANGAN gunakan untuk tugas simple yang bisa pake tool GitHub API biasa.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -348,6 +348,179 @@ export const githubTools = [
             },
           },
           required: ["target_repo", "instruction"],
+        },
+      },
+      {
+        name: "checkWorkflowStatus",
+        description: "Mengecek status terakhir workflow GitHub Actions yang pernah dipicu. Gunakan untuk melihat apakah task development masih jalan, udah selesai, atau gagal.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            owner: {
+              type: "STRING",
+              description: "Username atau organisasi pemilik repo.",
+            },
+            repo: {
+              type: "STRING",
+              description: "Nama repositori.",
+            },
+          },
+          required: ["owner", "repo"],
+        },
+      },
+      {
+        name: "webSearch",
+        description: "Mencari informasi terbaru dari internet. Gunakan untuk berita terkini, data real-time, atau topik yang mungkin tidak ada di pengetahuan Cocoa. Hasil berupa daftar judul, URL, dan cuplikan.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: {
+              type: "STRING",
+              description: "Kata kunci pencarian (gunakan bahasa Indonesia atau Inggris).",
+            },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "webFetch",
+        description: "Mengambil dan membaca isi halaman web dari URL tertentu. Gunakan untuk membaca artikel, dokumentasi teknis, atau konten dari hasil webSearch.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            url: {
+              type: "STRING",
+              description: "URL lengkap halaman web yang ingin dibaca.",
+            },
+          },
+          required: ["url"],
+        },
+      },
+      {
+        name: "createTaskPlan",
+        description: "Membuat rencana tugas (task plan) dengan beberapa langkah. Gunakan ini ketika pengguna memberikan perintah kompleks yang butuh banyak langkah. Buat daftar langkah-langkahnya, eksekusi satu per satu, dan update status setiap langkah.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            title: { type: "STRING", description: "Judul rencana/plan." },
+            description: { type: "STRING", description: "Deskripsi tujuan plan ini." },
+            steps: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "Daftar langkah-langkah yang harus dilakukan, urut dari pertama sampai terakhir.",
+            },
+          },
+          required: ["title", "steps"],
+        },
+      },
+      {
+        name: "getTaskPlan",
+        description: "Melihat daftar tugas yang sudah dibuat dan statusnya saat ini. Panggil untuk cek progress atau lihat tugas apa yang masih pending.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: [],
+        },
+      },
+      {
+        name: "updateTaskStatus",
+        description: "Memperbarui status sebuah tugas. Panggil setelah selesai mengerjakan satu langkah untuk menandai progres.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            task_id: { type: "NUMBER", description: "ID tugas yang akan diupdate." },
+            status: {
+              type: "STRING",
+              description: "Status baru: 'pending', 'in_progress', 'completed', 'failed'.",
+              enum: ["pending", "in_progress", "completed", "failed"],
+            },
+          },
+          required: ["task_id", "status"],
+        },
+      },
+      {
+        name: "clearTaskPlan",
+        description: "Menghapus semua tugas dalam plan saat ini. Panggil jika plan sudah selesai semua atau ingin memulai plan baru dari awal.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: [],
+        },
+      },
+      {
+        name: "remember",
+        description: "Menyimpan informasi penting tentang pengguna atau konteks obrolan ke memori jangka panjang. Gunakan untuk mengingat nama, preferensi, project, atau fakta apapun yang perlu diingat di sesi mendatang.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            key: { type: "STRING", description: "Nama/kategori informasi (contoh: 'nama_pengguna', 'project_utama')." },
+            value: { type: "STRING", description: "Isi informasi yang ingin disimpan." },
+          },
+          required: ["key", "value"],
+        },
+      },
+      {
+        name: "recall",
+        description: "Mengambil informasi yang sudah disimpan di memori jangka panjang berdasarkan kata kunci. Gunakan untuk mengingat detail tentang pengguna atau konteks.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            key: { type: "STRING", description: "Kata kunci memori yang ingin diingat." },
+          },
+          required: ["key"],
+        },
+      },
+      {
+        name: "recallAll",
+        description: "Mengambil semua informasi yang tersimpan di memori jangka panjang untuk sesi ini. Gunakan saat butuh konteks lengkap tentang pengguna.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: [],
+        },
+      },
+      {
+        name: "forget",
+        description: "Menghapus informasi tertentu dari memori jangka panjang.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            key: { type: "STRING", description: "Kata kunci memori yang ingin dihapus." },
+          },
+          required: ["key"],
+        },
+      },
+      {
+        name: "setReminder",
+        description: "Membuat pengingat. Gunakan untuk mengingatkan pengguna tentang sesuatu di waktu yang akan datang. Pengingat akan dikirim otomatis via chat.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            title: { type: "STRING", description: "Pesan atau judul pengingat." },
+            delay_minutes: { type: "NUMBER", description: "Berapa menit lagi dari sekarang pengingat mau dikirim? (minimal 1 menit)." },
+            recurring: { type: "STRING", description: "'daily' untuk pengingat harian, atau kosongkan untuk sekali saja." },
+          },
+          required: ["title", "delay_minutes"],
+        },
+      },
+      {
+        name: "getReminders",
+        description: "Melihat daftar pengingat yang aktif dan jadwalnya.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: [],
+        },
+      },
+      {
+        name: "deleteReminder",
+        description: "Menghapus pengingat yang sudah tidak diperlukan.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            reminder_id: { type: "NUMBER", description: "ID pengingat yang akan dihapus." },
+          },
+          required: ["reminder_id"],
         },
       },
     ],

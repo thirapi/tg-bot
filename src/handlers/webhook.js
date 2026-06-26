@@ -2,6 +2,7 @@ import { RATE_LIMIT_SECONDS } from "../config.js";
 import { sendTelegramMessage } from "../services/telegram.js";
 import { processMessage } from "./message.js";
 import { checkGeminiQuota } from "../services/gemini.js";
+import { clearHistory } from "../db/index.js";
 
 export async function handleWebhook(request, env, ctx) {
   if (request.method !== "POST") {
@@ -39,7 +40,7 @@ export async function handleWebhook(request, env, ctx) {
     if (normalizedText === "/start" || normalizedText === "/reset") {
       ctx.waitUntil((async () => {
         await env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 });
-        await env.CHAT_HISTORY.delete(chatId);
+        await clearHistory(env, chatId);
         await env.CHAT_HISTORY.delete(lockKey).catch(() => { });
         await sendTelegramMessage(
           env.TELEGRAM_BOT_TOKEN,
@@ -57,9 +58,9 @@ export async function handleWebhook(request, env, ctx) {
           "<b>bisa apa aja?</b>\n" +
           "/start atau /reset - hapus memori biar kita mulai dr awal lagi\n" +
           "/help - lihat daftar ini\n" +
-          "/unblock - reset status blacklist dan lock kalo bot stuck\n" +
-          "/quota atau /keys - cek sisa kuota dan status API Key\n\n" +
-          "selain ngobrol santai, aku jg bisa bantu kamu cek issue di GitHub, review PR, atau liat-liat foto dan dengerin voice note kamu. kasih tau aja ya!";
+          "/unblock - reset kalo tiba-tiba macet\n" +
+          "/quota atau /keys - cek status koneksi\n\n" +
+          "selain ngobrol, aku jg bisa bantu urusan github, cari info di internet, bikin pengingat, atau liat foto dan dengerin voice note kamu. tinggal bilang aja!";
         await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, helpMsg);
       })());
       return new Response("OK", { status: 200 });
@@ -78,7 +79,7 @@ export async function handleWebhook(request, env, ctx) {
           await sendTelegramMessage(
             env.TELEGRAM_BOT_TOKEN,
             chatId,
-            "✅ semua status blacklist/cooldown API Key dan lock di KV udh dihapus ya! aku siap nerima pesan baru",
+            "oke, semua status yang macet udh direset ya! aku siap lagi nih",
           );
         } catch (err) {
           console.error("Unblock Error:", err);
@@ -92,7 +93,7 @@ export async function handleWebhook(request, env, ctx) {
       ctx.waitUntil((async () => {
         try {
           await env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 });
-          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "sip, tunggu bentar ya! aku cek dulu status semua API Key sama modelnya...");
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "sip, tunggu bentar ya! aku cek dulu status koneksinya...");
           const quotaStatus = await checkGeminiQuota(env);
           await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, quotaStatus);
         } catch (err) {
