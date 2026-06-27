@@ -3,10 +3,13 @@ const MAX_ROWS_PER_CHAT = 60;
 export async function getHistory(env, chatId, limit = 40) {
   try {
     const { results } = await env.DB.prepare(
-      `SELECT role, parts FROM conversations
-       WHERE chat_id = ?
-       ORDER BY created_at ASC
-       LIMIT ?`
+      `SELECT role, parts FROM (
+         SELECT id, role, parts FROM conversations
+         WHERE chat_id = ?
+         ORDER BY id DESC
+         LIMIT ?
+       )
+       ORDER BY id ASC`
     ).bind(chatId, limit).all();
 
     return results.map(row => ({
