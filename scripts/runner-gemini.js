@@ -304,6 +304,7 @@ export class AgentSession {
     this.onStatusUpdate = onStatusUpdate || (async () => { });
     this.analysisMode = analysisMode;
     this.history = [];
+    this._lastModelParts = null;
 
     // Parse and build provider configs
     this.providers = [];
@@ -398,6 +399,7 @@ export class AgentSession {
         if (p.text !== undefined) cleanedPart.text = p.text;
         if (p.functionCall !== undefined) cleanedPart.functionCall = p.functionCall;
         if (p.functionResponse !== undefined) cleanedPart.functionResponse = p.functionResponse;
+        if (p.thoughtSignature !== undefined) cleanedPart.thoughtSignature = p.thoughtSignature;
         return Object.keys(cleanedPart).length > 0 ? cleanedPart : null;
       }).filter(Boolean)
     })).filter(h => h.parts.length > 0);
@@ -439,6 +441,7 @@ export class AgentSession {
 
     while (attempts < maxAttempts) {
       attempts++;
+      this._lastModelParts = null;
       const config = this._getActiveConfig();
       if (!config) {
         throw new Error("Gagal mengirim pesan: Semua kombinasi provider, model, dan key telah dicoba dan gagal.");
@@ -467,20 +470,35 @@ export class AgentSession {
           });
 
           let text = "";
+          let functionCalls = [];
+          this._lastModelParts = null;
+
           try {
-            text = response.response.text();
+            const candidate = response.response.candidates?.[0];
+            const rawParts = candidate?.content?.parts || [];
+            const modelParts = [];
+
+            for (const part of rawParts) {
+              if (part.text) {
+                text += (text ? "\n" : "") + part.text;
+              }
+              if (part.functionCall) {
+                functionCalls.push(part.functionCall);
+              }
+              const stored = {};
+              if (part.text) stored.text = part.text;
+              if (part.functionCall) stored.functionCall = part.functionCall;
+              if (part.thoughtSignature) stored.thoughtSignature = part.thoughtSignature;
+              if (Object.keys(stored).length > 0) modelParts.push(stored);
+            }
+
+            if (modelParts.length > 0) {
+              this._lastModelParts = modelParts;
+            }
           } catch (e) {
             const candidate = response.response.candidates?.[0];
             const parts = candidate?.content?.parts || [];
             text = parts.map(p => p.text).filter(Boolean).join("\n");
-          }
-
-          let functionCalls = [];
-          try {
-            functionCalls = response.response.functionCalls() || [];
-          } catch (e) {
-            const candidate = response.response.candidates?.[0];
-            const parts = candidate?.content?.parts || [];
             functionCalls = parts.filter(p => p.functionCall).map(p => p.functionCall);
           }
 
@@ -621,13 +639,21 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
 
         const functionCalls = response.functionCalls();
         
-        this.history.push({
-          role: "model",
-          parts: [
-            textOutput ? { text: textOutput } : null,
-            ...functionCalls.map(fc => ({ functionCall: fc }))
-          ].filter(Boolean)
-        });
+        if (this._lastModelParts) {
+          this.history.push({
+            role: "model",
+            parts: this._lastModelParts
+          });
+          this._lastModelParts = null;
+        } else {
+          this.history.push({
+            role: "model",
+            parts: [
+              textOutput ? { text: textOutput } : null,
+              ...functionCalls.map(fc => ({ functionCall: fc }))
+            ].filter(Boolean)
+          });
+        }
 
         if (!functionCalls || functionCalls.length === 0) {
           console.log("Agent tidak memanggil tool apa-apa. Memberikan peringatan...");

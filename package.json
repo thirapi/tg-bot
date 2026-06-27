@@ -12,7 +12,7 @@
     "db:init:local": "wrangler d1 execute tg-bot-db --local --file=src/db/schema.sql"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.21.0"
+    "@google/generative-ai": "^0.24.1"
   },
   "devDependencies": {
     "wrangler": "^3.109.0"
