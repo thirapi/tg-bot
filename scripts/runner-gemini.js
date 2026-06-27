@@ -166,65 +166,342 @@ function buildSystemInstruction(isAnalysisMode) {
   return isAnalysisMode ? analysisModeInstruction : codeModeInstruction;
 }
 
+function convertParamsToOpenAI(params) {
+  if (!params) return params;
+  const result = { ...params };
+  if (result.type) result.type = result.type.toLowerCase();
+  if (result.properties) {
+    const newProps = {};
+    for (const [key, val] of Object.entries(result.properties)) {
+      newProps[key] = convertParamsToOpenAI(val);
+    }
+    result.properties = newProps;
+  }
+  if (result.items) result.items = convertParamsToOpenAI(result.items);
+  return result;
+}
+
+function buildOpenAITools(toolsDef) {
+  const tools = [];
+  for (const group of toolsDef) {
+    for (const fn of group.functionDeclarations) {
+      tools.push({
+        type: "function",
+        function: {
+          name: fn.name,
+          description: fn.description,
+          parameters: convertParamsToOpenAI(fn.parameters),
+        },
+      });
+    }
+  }
+  return tools;
+}
+
+function convertContentsToMessages(contents) {
+  const messages = [];
+  let pendingToolCalls = [];
+
+  for (const content of contents) {
+    if (content.role === "user") {
+      pendingToolCalls = [];
+      const textParts = content.parts.filter(p => p.text).map(p => p.text);
+      messages.push({
+        role: "user",
+        content: textParts.join("\n"),
+      });
+    } else if (content.role === "model") {
+      const textPart = content.parts.filter(p => p.text).map(p => p.text).join("\n");
+      const fcParts = content.parts.filter(p => p.functionCall);
+
+      if (fcParts.length > 0) {
+        const toolCalls = fcParts.map((p, i) => ({
+          id: `call_${i}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          type: "function",
+          function: {
+            name: p.functionCall.name,
+            arguments: JSON.stringify(p.functionCall.args),
+          },
+        }));
+        pendingToolCalls = toolCalls;
+        messages.push({
+          role: "assistant",
+          content: textPart || null,
+          tool_calls: toolCalls,
+        });
+      } else {
+        pendingToolCalls = [];
+        messages.push({ role: "assistant", content: textPart });
+      }
+    } else if (content.role === "function") {
+      for (const part of content.parts) {
+        if (part.functionResponse) {
+          const match = pendingToolCalls.find(
+            tc => tc.function.name === part.functionResponse.name
+          );
+          const res = part.functionResponse.response;
+          const textContent = res.error 
+            ? `Error: ${res.error}` 
+            : (typeof res.result === "string" ? res.result : JSON.stringify(res.result));
+            
+          messages.push({
+            role: "tool",
+            tool_call_id: match ? match.id : `call_fallback_${Date.now()}`,
+            content: textContent,
+          });
+        }
+      }
+    }
+  }
+  return messages;
+}
+
+async function callGroqAPI(model, key, messages, tools, systemInstruction) {
+  const payload = {
+    model,
+    messages: [
+      { role: "system", content: systemInstruction },
+      ...messages
+    ],
+    temperature: 0.1,
+    max_tokens: 8192
+  };
+  if (tools && tools.length > 0) {
+    payload.tools = tools;
+    payload.tool_choice = "auto";
+  }
+
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${key}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`GROQ_API_ERROR: status ${response.status} - ${text}`);
+  }
+
+  return response.json();
+}
+
+class AIResponse {
+  constructor(text, functionCalls) {
+    this._text = text || "";
+    this._functionCalls = functionCalls || [];
+  }
+  text() { return this._text; }
+  functionCalls() { return this._functionCalls; }
+}
+
 export class AgentSession {
   constructor(instruction, toolHandlers, onStatusUpdate, analysisMode = false) {
     this.instruction = instruction;
     this.toolHandlers = toolHandlers;
     this.onStatusUpdate = onStatusUpdate || (async () => { });
     this.analysisMode = analysisMode;
+    this.history = [];
 
-    const keys = (process.env.GEMINI_API_KEYS || "").split(",").map(k => k.trim()).filter(k => k);
+    // Parse and build provider configs
+    this.providers = [];
+    
+    const geminiKeys = (process.env.GEMINI_API_KEYS || "").split(",").map(k => k.trim()).filter(Boolean);
+    const geminiModels = (process.env.GEMINI_MODELS || "gemini-3.1-flash-lite,gemini-3-flash-preview,gemini-3.5-flash")
+      .split(",").map(m => m.trim()).filter(Boolean);
 
-    const rawModels = (process.env.GEMINI_MODELS || "gemini-3.1-flash-lite,gemini-3-flash-preview,gemini-3.5-flash")
-      .split(",")
-      .map(m => m.trim())
-      .filter(m => m);
+    if (geminiKeys.length > 0) {
+      this.providers.push({
+        name: "gemini",
+        keys: shuffle([...geminiKeys]),
+        models: geminiModels
+      });
+    }
 
-    this.keys = keys;
-    this.models = rawModels;
-    this.chat = null;
-    this.modelName = null;
-    this.key = null;
+    const groqKeys = (process.env.GROQ_API_KEY || "").split(",").map(k => k.trim()).filter(Boolean);
+    const groqModels = (process.env.GROQ_MODELS || "llama-3.3-70b-versatile,llama-3.1-8b-instant,mixtral-8x7b-32768")
+      .split(",").map(m => m.trim()).filter(Boolean);
+
+    if (groqKeys.length > 0) {
+      this.providers.push({
+        name: "groq",
+        keys: shuffle([...groqKeys]),
+        models: groqModels
+      });
+    }
+
+    const priority = (process.env.AI_PROVIDERS || "gemini,groq")
+      .split(",").map(s => s.trim()).filter(Boolean);
+      
+    this.providers.sort((a, b) => priority.indexOf(a.name) - priority.indexOf(b.name));
+
+    this.activeProviderIdx = 0;
+    this.activeModelIdx = 0;
+    this.activeKeyIdx = 0;
+    
+    this.blacklistedCombos = new Set();
   }
 
-  async _initChat(history = []) {
-    for (const modelName of this.models) {
-      if (blacklistedModels.has(modelName)) continue;
-      const availableKeys = this.keys.filter(k => !blacklistedKeys.has(k));
-      if (availableKeys.length === 0) continue;
+  _getActiveConfig() {
+    while (this.activeProviderIdx < this.providers.length) {
+      const provider = this.providers[this.activeProviderIdx];
+      const model = provider.models[this.activeModelIdx];
+      const key = provider.keys[this.activeKeyIdx];
 
-      const shuffledKeys = shuffle([...availableKeys]);
+      const combo = `${provider.name}:${model}:${key}`;
+      if (!this.blacklistedCombos.has(combo)) {
+        return { providerName: provider.name, model, key };
+      }
 
-      for (const key of shuffledKeys) {
-        const comboId = `${key}:${modelName}`;
-        if (blacklistedCombos.has(comboId)) continue;
+      this.activeKeyIdx++;
+      if (this.activeKeyIdx >= provider.keys.length) {
+        this.activeKeyIdx = 0;
+        this.activeModelIdx++;
+        if (this.activeModelIdx >= provider.models.length) {
+          this.activeModelIdx = 0;
+          this.activeProviderIdx++;
+        }
+      }
+    }
+    return null;
+  }
 
-        try {
+  _blacklistCurrentAndRotate() {
+    const current = this._getActiveConfig();
+    if (current) {
+      const combo = `${current.providerName}:${current.model}:${current.key}`;
+      console.log(`Blacklisting combo: ${combo}`);
+      this.blacklistedCombos.add(combo);
+    }
+    
+    const provider = this.providers[this.activeProviderIdx];
+    if (provider) {
+      this.activeKeyIdx++;
+      if (this.activeKeyIdx >= provider.keys.length) {
+        this.activeKeyIdx = 0;
+        this.activeModelIdx++;
+        if (this.activeModelIdx >= provider.models.length) {
+          this.activeModelIdx = 0;
+          this.activeProviderIdx++;
+        }
+      }
+    }
+  }
+
+  _getCleanHistoryForGemini() {
+    return this.history.map(h => ({
+      role: h.role === "assistant" ? "model" : h.role,
+      parts: h.parts.map(p => {
+        const cleanedPart = {};
+        if (p.text !== undefined) cleanedPart.text = p.text;
+        if (p.functionCall !== undefined) cleanedPart.functionCall = p.functionCall;
+        if (p.functionResponse !== undefined) cleanedPart.functionResponse = p.functionResponse;
+        return Object.keys(cleanedPart).length > 0 ? cleanedPart : null;
+      }).filter(Boolean)
+    })).filter(h => h.parts.length > 0);
+  }
+
+  async _sendGroqRequest(model, key) {
+    const systemInstruction = buildSystemInstruction(this.analysisMode);
+    const messages = convertContentsToMessages(this.history);
+    const tools = buildOpenAITools(toolsDefinition);
+    
+    const responseData = await callGroqAPI(model, key, messages, tools, systemInstruction);
+    
+    const choice = responseData.choices?.[0];
+    if (!choice) {
+      throw new Error("GROQ_EMPTY_RESPONSE: Groq returned empty response");
+    }
+    
+    const message = choice.message;
+    const text = message.content || "";
+    const functionCalls = [];
+    
+    if (message.tool_calls) {
+      for (const tc of message.tool_calls) {
+        if (tc.type === "function") {
+          functionCalls.push({
+            name: tc.function.name,
+            args: JSON.parse(tc.function.arguments)
+          });
+        }
+      }
+    }
+    
+    return new AIResponse(text, functionCalls);
+  }
+
+  async _sendWithRetry() {
+    let attempts = 0;
+    const maxAttempts = 15;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      const config = this._getActiveConfig();
+      if (!config) {
+        throw new Error("Gagal mengirim pesan: Semua kombinasi provider, model, dan key telah dicoba dan gagal.");
+      }
+
+      const { providerName, model, key } = config;
+      console.log(`[Attempt ${attempts}] Sending request to ${providerName} using model ${model}...`);
+      
+      try {
+        let aiResponse;
+        if (providerName === "gemini") {
           const genAI = new GoogleGenerativeAI(key);
-          const model = genAI.getGenerativeModel({
-            model: modelName,
+          const geminiModel = genAI.getGenerativeModel({
+            model: model,
             systemInstruction: buildSystemInstruction(this.analysisMode),
             tools: toolsDefinition
           });
 
-          this.chat = model.startChat({
-            history: history,
+          const cleanHistory = this._getCleanHistoryForGemini();
+          const response = await geminiModel.generateContent({
+            contents: cleanHistory,
             generationConfig: {
               temperature: 0.1,
               maxOutputTokens: 8192
             }
           });
 
-          this.modelName = modelName;
-          this.key = key;
-          console.log(`Agent initialized with ${modelName}`);
-          return;
-        } catch (err) {
-          console.error(`Failed to init ${modelName} with key ${key.substring(0, 5)}:`, err.message);
+          let text = "";
+          try {
+            text = response.response.text();
+          } catch (e) {
+            const candidate = response.response.candidates?.[0];
+            const parts = candidate?.content?.parts || [];
+            text = parts.map(p => p.text).filter(Boolean).join("\n");
+          }
+
+          let functionCalls = [];
+          try {
+            functionCalls = response.response.functionCalls() || [];
+          } catch (e) {
+            const candidate = response.response.candidates?.[0];
+            const parts = candidate?.content?.parts || [];
+            functionCalls = parts.filter(p => p.functionCall).map(p => p.functionCall);
+          }
+
+          aiResponse = new AIResponse(text, functionCalls);
+        } else if (providerName === "groq") {
+          aiResponse = await this._sendGroqRequest(model, key);
         }
+
+        return aiResponse;
+      } catch (err) {
+        const msg = err.message || "";
+        console.error(`[Error] Gagal menggunakan ${providerName} (${model}): ${msg}`);
+        
+        this._blacklistCurrentAndRotate();
+        
+        console.log("Menunggu 5 detik sebelum mencoba kombinasi berikutnya...");
+        await new Promise(resolve => setTimeout(resolve, 5000));
       }
     }
-    throw new Error("Gagal menginisialisasi Gemini Agent dengan semua kombinasi key/model.");
+    
+    throw new Error("Gagal mendapatkan respon dari AI setelah beberapa kali rotasi.");
   }
 
   async validateTaskCompletion() {
@@ -258,17 +535,49 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
   "reason": "Penjelasan detail mengapa belum lengkap, sebutkan file atau bagian kode yang kurang jika isComplete bernilai false. Jika isComplete bernilai true, berikan penjelasan singkat keberhasilan."
 }`;
 
-      const genAI = new GoogleGenerativeAI(this.key);
-      const model = genAI.getGenerativeModel({
-        model: this.modelName,
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.1,
-        }
-      });
+      const config = this._getActiveConfig();
+      if (!config) {
+        throw new Error("No active AI configuration available for validation.");
+      }
 
-      const result = await model.generateContent(prompt);
-      const responseText = result.response.text();
+      const { providerName, model, key } = config;
+      let responseText = "";
+
+      if (providerName === "gemini") {
+        const genAI = new GoogleGenerativeAI(key);
+        const geminiModel = genAI.getGenerativeModel({
+          model: model,
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.1,
+          }
+        });
+        const result = await geminiModel.generateContent(prompt);
+        responseText = result.response.text();
+      } else if (providerName === "groq") {
+        const payload = {
+          model,
+          messages: [
+            { role: "user", content: prompt }
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0.1,
+        };
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${key}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+          throw new Error(`Groq validation request failed: ${response.status}`);
+        }
+        const data = await response.json();
+        responseText = data.choices?.[0]?.message?.content || "";
+      }
+
       const validation = JSON.parse(responseText);
       return validation;
     } catch (error) {
@@ -281,77 +590,14 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
     }
   }
 
-  async _sendWithRetry(messageInput) {
-    let attempts = 0;
-    const maxAttempts = 5;
-
-    while (attempts < maxAttempts) {
-      attempts++;
-      try {
-        const result = await this.chat.sendMessage(messageInput);
-        return result.response;
-      } catch (err) {
-        const msg = err.message || "";
-        const isRateLimit = msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("503") || msg.includes("quota");
-
-        if (isRateLimit && attempts < maxAttempts) {
-          console.log(`[Rate Limit / API Error] Gagal menggunakan ${this.modelName} dengan key ${this.key.substring(0, 5)}: ${msg}`);
-          console.log(`Menambahkan combo ${this.key.substring(0, 5)}:${this.modelName} ke blacklist.`);
-          blacklistedCombos.add(`${this.key}:${this.modelName}`);
-
-          let rawHistory = [];
-          if (this.chat) {
-            try {
-              rawHistory = await this.chat.getHistory();
-            } catch (histErr) {
-              rawHistory = [];
-            }
-          }
-
-          const cleanHistory = rawHistory.map(h => ({
-            role: h.role,
-            parts: h.parts.map(p => {
-              const cleanedPart = {};
-              if (p.text !== undefined) cleanedPart.text = p.text;
-              if (p.functionCall !== undefined) cleanedPart.functionCall = p.functionCall;
-              if (p.functionResponse !== undefined) cleanedPart.functionResponse = p.functionResponse;
-              return Object.keys(cleanedPart).length > 0 ? cleanedPart : null;
-            }).filter(Boolean)
-          })).filter(h => h.parts.length > 0);
-
-          // Hapus entri model di akhir (functionCall yang belum sempat direspon)
-          while (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].role === 'model') {
-            cleanHistory.pop();
-          }
-          // Pastikan history dimulai dengan role user
-          if (cleanHistory.length > 0 && cleanHistory[0].role === 'model') {
-            cleanHistory.shift();
-          }
-
-          console.log("Menunggu 10 detik sebelum rotasi key/model...");
-          await new Promise(resolve => setTimeout(resolve, 10000));
-
-          try {
-            await this._initChat(cleanHistory);
-            console.log(`Rotasi sukses. Melakukan percobaan ulang (${attempts}/${maxAttempts})...`);
-            continue;
-          } catch (rotateErr) {
-            console.error("Gagal melakukan rotasi key/model:", rotateErr.message);
-          }
-        }
-
-        throw err;
-      }
-    }
-    throw new Error("Gagal mengirim pesan setelah beberapa kali percobaan rotasi key/model.");
-  }
-
   async start() {
-    if (!this.chat) await this._initChat();
-
+    this.history = [];
+    
     let isTaskFinished = false;
     let finalResult = null;
     let nextMessage = `INSTRUKSI USER: ${this.instruction}\n\nLakukan tugas ini secara bertahap menggunakan tools.`;
+    
+    this.history.push({ role: "user", parts: [{ text: nextMessage }] });
 
     let loopCount = 0;
     const MAX_LOOPS = 30;
@@ -359,7 +605,7 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
     let lastNonFinishTool = null;
 
     console.log(`\n--- Agent Loop Start ---`);
-    let response = await this._sendWithRetry([{ text: nextMessage }]);
+    let response = await this._sendWithRetry();
 
     while (!isTaskFinished && loopCount < MAX_LOOPS) {
       loopCount++;
@@ -374,10 +620,21 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
         }
 
         const functionCalls = response.functionCalls();
+        
+        this.history.push({
+          role: "model",
+          parts: [
+            textOutput ? { text: textOutput } : null,
+            ...functionCalls.map(fc => ({ functionCall: fc }))
+          ].filter(Boolean)
+        });
+
         if (!functionCalls || functionCalls.length === 0) {
           console.log("Agent tidak memanggil tool apa-apa. Memberikan peringatan...");
           const nudge = "Kamu belum memanggil tool apapun. Tolong gunakan tool yang tersedia untuk mengeksplorasi file, menulis kode, atau panggil finishTask jika sudah selesai.";
-          response = await this._sendWithRetry([{ text: nudge }]);
+          
+          this.history.push({ role: "user", parts: [{ text: nudge }] });
+          response = await this._sendWithRetry();
           continue;
         }
 
@@ -503,12 +760,25 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
           }
         }
 
-        response = await this._sendWithRetry(toolResponses);
+        this.history.push({
+          role: "function",
+          parts: toolResponses
+        });
+
+        if (isTaskFinished) {
+          break;
+        }
+
+        response = await this._sendWithRetry();
 
       } catch (err) {
         console.error(`Error in loop:`, err.message);
         try {
-          response = await this._sendWithRetry([{ text: `Terjadi error tak terduga: ${err.message}. Coba gunakan cara lain.` }]);
+          this.history.push({
+            role: "user",
+            parts: [{ text: `Terjadi error tak terduga: ${err.message}. Coba gunakan cara lain.` }]
+          });
+          response = await this._sendWithRetry();
         } catch (innerErr) {
           console.error("Gagal memulihkan dari error tak terduga:", innerErr.message);
           throw err;

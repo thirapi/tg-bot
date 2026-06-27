@@ -1,5 +1,6 @@
 import { MAX_HISTORY, MAX_AGENT_ITERATIONS } from "../config.js";
 import { fetchGeminiGenerate } from "../services/gemini.js";
+import { fetchGroqGenerate } from "../services/groq.js";
 import { prepareMediaPart } from "../services/media.js";
 import {
   sendTelegramAction,
@@ -14,6 +15,36 @@ import {
   trimHistory,
   clearHistory,
 } from "../db/index.js";
+
+function buildProviderConfigs(env) {
+  const configs = [];
+
+  if (env.GEMINI_API_KEYS) {
+    configs.push({
+      name: "gemini",
+      keys: env.GEMINI_API_KEYS.split(",").map((k) => k.trim()),
+      models: (env.GEMINI_MODELS || "gemini-3.1-flash-lite,gemini-3-flash-preview,gemini-3.5-flash")
+        .split(",").map((m) => m.trim()),
+      callAI: fetchGeminiGenerate,
+    });
+  }
+
+  if (env.GROQ_API_KEY) {
+    configs.push({
+      name: "groq",
+      keys: env.GROQ_API_KEY.split(",").map((k) => k.trim()),
+      models: (env.GROQ_MODELS || "llama-3.3-70b-versatile,llama-3.1-8b-instant,mixtral-8x7b-32768")
+        .split(",").map((m) => m.trim()),
+      callAI: fetchGroqGenerate,
+    });
+  }
+
+  const priority = (env.AI_PROVIDERS || "gemini,groq")
+    .split(",").map((s) => s.trim());
+  configs.sort((a, b) => priority.indexOf(a.name) - priority.indexOf(b.name));
+
+  return configs;
+}
 
 export async function processMessage(message, env) {
   const chatId = String(message.chat.id);
@@ -65,35 +96,22 @@ export async function processMessage(message, env) {
       return;
     }
 
-    const keys = env.GEMINI_API_KEYS.split(",").map((k) => k.trim());
-    const models = (env.GEMINI_MODELS || "gemini-3.1-flash-lite,gemini-3-flash-preview,gemini-3.5-flash")
-      .split(",")
-      .map((m) => m.trim());
+    const providerConfigs = buildProviderConfigs(env);
+    if (providerConfigs.length === 0) {
+      throw new Error("gak ada provider AI yang aktif. cek konfigurasi API key kamu ya!");
+    }
 
     let userParts = [{ text: userPrompt }];
     if (mediaData) userParts.push(mediaData);
 
     let currentContents = [...history, { role: "user", parts: userParts }];
     let iteration = 0;
-    let finalGeminiText = null;
+    let finalText = null;
     const startTime = Date.now();
     const EXECUTION_TIMEOUT = 23000;
 
-    const blacklistedModels = new Set();
-    const blacklistedKeysGlobal = new Set();
-    const blacklistedKeysPerModel = new Set();
-    let globalFailures = 0;
-
-    const cooldownStatuses = await Promise.all(
-      keys.map(async (key) => {
-        const keyShort = key.slice(-6);
-        const isGloballyDown = await env.CHAT_HISTORY.get(`cooldown:${keyShort}`);
-        return { key, isGloballyDown: !!isGloballyDown };
-      })
-    );
-    const kvCooldownedKeys = new Set(
-      cooldownStatuses.filter(item => item.isGloballyDown).map(item => item.key)
-    );
+    const failedProviders = new Set();
+    let lastError = null;
 
     while (iteration < MAX_AGENT_ITERATIONS) {
       iteration++;
@@ -104,95 +122,136 @@ export async function processMessage(message, env) {
         );
       }
 
-      let geminiResponse = null;
-      let lastError = null;
+      let response = null;
+      let providerUsed = null;
+      lastError = null;
 
-      let activeModels = models.filter((m) => !blacklistedModels.has(m));
-      if (activeModels.length === 0) {
-        throw new Error(
-          "duh, semua model gemini lagi eror atau kena limit nih. coba beberapa saat lagi ya",
+      for (const provider of providerConfigs) {
+        if (failedProviders.has(provider.name)) continue;
+        if (Date.now() - startTime > EXECUTION_TIMEOUT) break;
+
+        const { name, keys, models, callAI } = provider;
+        const blacklistedModels = new Set();
+        const blacklistedKeysGlobal = new Set();
+        const blacklistedKeysPerModel = new Set();
+        let globalFailures = 0;
+
+        const cooldownStatuses = await Promise.all(
+          keys.map(async (key) => {
+            const keyShort = key.slice(-6);
+            const isGloballyDown = await env.CHAT_HISTORY.get(`cooldown:${keyShort}`);
+            return { key, isGloballyDown: !!isGloballyDown };
+          })
         );
-      }
+        const kvCooldownedKeys = new Set(
+          cooldownStatuses.filter(item => item.isGloballyDown).map(item => item.key)
+        );
 
-      outerLoop: for (const model of activeModels) {
-        if (Date.now() - startTime > EXECUTION_TIMEOUT) break outerLoop;
+        let activeModels = models.filter((m) => !blacklistedModels.has(m));
+        if (activeModels.length === 0) continue;
 
-        const availableKeys = [];
-        for (const key of keys) {
-          const isLocallyDown = blacklistedKeysPerModel.has(`${model}:${key}`);
-          const isGloballyDown = blacklistedKeysGlobal.has(key) || kvCooldownedKeys.has(key);
-          if (!isLocallyDown && !isGloballyDown) {
-            availableKeys.push(key);
-            if (availableKeys.length >= 3) break;
-          }
-        }
-
-        if (availableKeys.length === 0) continue;
-
-        const shuffledKeys = shuffleArray(availableKeys);
-
-        let consecutiveFailures = 0;
-        const MAX_FAILURES_BEFORE_SKIP = 2;
-
-        for (const key of shuffledKeys) {
+        outerLoop: for (const model of activeModels) {
           if (Date.now() - startTime > EXECUTION_TIMEOUT) break outerLoop;
 
-          const keyShort = key.slice(-6);
-          try {
-            const fetchPromise = fetchGeminiGenerate(model, key, currentContents, env, chatId);
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("GEMINI_RETRY_TRIGGER: Request Timeout (5s)")), 5000));
-
-            geminiResponse = await Promise.race([fetchPromise, timeoutPromise]);
-            if (geminiResponse) break outerLoop;
-          } catch (err) {
-            console.error(`Error dengan model ${model} [Key: ${keyShort}...]:`, err.message);
-            lastError = err;
-            globalFailures++;
-
-            if (globalFailures >= 3) {
-              throw new Error("server google ai lagi down parah nih. coba kirim ulang chatnya bentar lagi ya!");
+          const availableKeys = [];
+          for (const key of keys) {
+            const isLocallyDown = blacklistedKeysPerModel.has(`${model}:${key}`);
+            const isGloballyDown = blacklistedKeysGlobal.has(key) || kvCooldownedKeys.has(key);
+            if (!isLocallyDown && !isGloballyDown) {
+              availableKeys.push(key);
+              if (availableKeys.length >= 3) break;
             }
+          }
 
-            if (err.message.includes("503") || err.message.includes("UNAVAILABLE")) {
-              blacklistedModels.add(model);
-              break;
-            }
+          if (availableKeys.length === 0) continue;
 
-            if (err.message.includes("GEMINI_RETRY_TRIGGER") || err.message.includes("429") || err.message.includes("RESOURCE_EXHAUSTED")) {
-              blacklistedKeysGlobal.add(key);
-              blacklistedKeysPerModel.add(`${model}:${key}`);
+          const shuffledKeys = shuffleArray(availableKeys);
 
-              let expirationTtl = 60;
-              const match = err.message.match(/"retryDelay":\s*"(\d+)s"/);
-              if (match && match[1]) expirationTtl = parseInt(match[1], 10) + 5;
-              await env.CHAT_HISTORY.put(`cooldown:${keyShort}`, "1", { expirationTtl });
+          let consecutiveFailures = 0;
+          const MAX_FAILURES_BEFORE_SKIP = 2;
 
-              consecutiveFailures++;
-              if (consecutiveFailures >= MAX_FAILURES_BEFORE_SKIP) break;
-              continue;
-            }
+          for (const key of shuffledKeys) {
+            if (Date.now() - startTime > EXECUTION_TIMEOUT) break outerLoop;
 
-            if (err.message.includes("GEMINI_KEY_INVALID") || err.message.includes("GEMINI_KEY_BLOCKED")) {
-              blacklistedKeysGlobal.add(key);
-              await env.CHAT_HISTORY.put(`cooldown:${keyShort}`, "1", { expirationTtl: 600 });
-              continue;
-            }
+            const keyShort = key.slice(-6);
+            try {
+              const fetchPromise = callAI(model, key, currentContents, env, chatId);
+              const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error("TIMEOUT_TRIGGER: Request Timeout (5s)")), 5000)
+              );
 
-            if (err.message.includes("GEMINI_MODEL_NOT_FOUND") || err.message.includes("404")) {
-              blacklistedModels.add(model);
-              break;
+              response = await Promise.race([fetchPromise, timeoutPromise]);
+              if (response) {
+                providerUsed = name;
+                break outerLoop;
+              }
+            } catch (err) {
+              console.error(`[${name}] Error model ${model} [Key: ${keyShort}...]:`, err.message);
+              lastError = err;
+              globalFailures++;
+
+              if (globalFailures >= 3) {
+                break outerLoop;
+              }
+
+              const errMsg = err.message;
+
+              if (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.includes("SERVICE_UNAVAILABLE")) {
+                blacklistedModels.add(model);
+                break;
+              }
+
+              const isRetryable = errMsg.includes("TIMEOUT_TRIGGER") ||
+                errMsg.includes("GEMINI_RETRY_TRIGGER") ||
+                errMsg.includes("GROQ_RATE_LIMIT") ||
+                errMsg.includes("429") ||
+                errMsg.includes("RESOURCE_EXHAUSTED") ||
+                errMsg.includes("GROQ_TIMEOUT");
+              if (isRetryable) {
+                blacklistedKeysGlobal.add(key);
+                blacklistedKeysPerModel.add(`${model}:${key}`);
+
+                let expirationTtl = 60;
+                const match = errMsg.match(/"retryDelay":\s*"(\d+)s"/);
+                if (match && match[1]) expirationTtl = parseInt(match[1], 10) + 5;
+                await env.CHAT_HISTORY.put(`cooldown:${keyShort}`, "1", { expirationTtl });
+
+                consecutiveFailures++;
+                if (consecutiveFailures >= MAX_FAILURES_BEFORE_SKIP) break;
+                continue;
+              }
+
+              const isKeyInvalid = errMsg.includes("GEMINI_KEY_INVALID") ||
+                errMsg.includes("GEMINI_KEY_BLOCKED") ||
+                errMsg.includes("GROQ_KEY_INVALID");
+              if (isKeyInvalid) {
+                blacklistedKeysGlobal.add(key);
+                await env.CHAT_HISTORY.put(`cooldown:${keyShort}`, "1", { expirationTtl: 600 });
+                continue;
+              }
+
+              if (errMsg.includes("GEMINI_MODEL_NOT_FOUND") || errMsg.includes("GROQ_MODEL_NOT_FOUND") || errMsg.includes("404")) {
+                blacklistedModels.add(model);
+                break;
+              }
             }
           }
         }
+
+        if (response) break;
+        failedProviders.add(name);
       }
 
-      if (!geminiResponse) {
-        throw lastError || new Error("Semua Gemini API endpoint gagal merespon atau kehabisan waktu eksekusi.");
+      if (!response) {
+        if (failedProviders.size >= providerConfigs.length) {
+          throw lastError || new Error("duh, semua provider AI lagi error atau kena limit nih. coba beberapa saat lagi ya");
+        }
+        throw lastError || new Error("Semua AI endpoint gagal merespon atau kehabisan waktu eksekusi.");
       }
 
-      const candidate = geminiResponse.candidates?.[0];
+      const candidate = response.candidates?.[0];
       const modelContent = candidate?.content;
-      if (!modelContent) throw new Error("Gemini mengembalikan konten kosong.");
+      if (!modelContent) throw new Error("AI mengembalikan konten kosong.");
 
       currentContents.push(modelContent);
       const parts = modelContent.parts || [];
@@ -236,15 +295,15 @@ export async function processMessage(message, env) {
       const dynamicTextPart = parts.map(p => p.text).filter(Boolean).join("\n");
 
       if (dynamicTextPart) {
-        finalGeminiText = dynamicTextPart;
+        finalText = dynamicTextPart;
         break;
       }
 
       if (functionCalls.length === 0) break;
     }
 
-    if (finalGeminiText) {
-      const richHtml = markdownToRichHtml(finalGeminiText);
+    if (finalText) {
+      const richHtml = markdownToRichHtml(finalText);
       await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml);
 
       const newContent = currentContents.slice(history.length);
@@ -262,7 +321,7 @@ export async function processMessage(message, env) {
         await trimHistory(env, chatId, maxHistory);
       }
     } else {
-      console.warn("Gemini did not provide final text output.");
+      console.warn("AI did not provide final text output.");
       await sendTelegramMessage(
         env.TELEGRAM_BOT_TOKEN,
         chatId,

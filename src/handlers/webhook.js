@@ -2,6 +2,7 @@ import { RATE_LIMIT_SECONDS } from "../config.js";
 import { sendTelegramMessage } from "../services/telegram.js";
 import { processMessage } from "./message.js";
 import { checkGeminiQuota } from "../services/gemini.js";
+import { checkGroqQuota } from "../services/groq.js";
 import { clearHistory } from "../db/index.js";
 
 export async function handleWebhook(request, env, ctx) {
@@ -70,8 +71,10 @@ export async function handleWebhook(request, env, ctx) {
       ctx.waitUntil((async () => {
         try {
           await env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 });
-          const keys = (env.GEMINI_API_KEYS || "").split(",").map((k) => k.trim()).filter(Boolean);
-          const deletePromises = keys.map(key => env.CHAT_HISTORY.delete(`cooldown:${key.slice(-6)}`));
+          const geminiKeys = (env.GEMINI_API_KEYS || "").split(",").map((k) => k.trim()).filter(Boolean);
+          const groqKeys = (env.GROQ_API_KEY || "").split(",").map((k) => k.trim()).filter(Boolean);
+          const allKeys = [...geminiKeys, ...groqKeys];
+          const deletePromises = allKeys.map(key => env.CHAT_HISTORY.delete(`cooldown:${key.slice(-6)}`));
           await Promise.all([
             ...deletePromises,
             env.CHAT_HISTORY.delete(lockKey).catch(() => { })
@@ -94,7 +97,9 @@ export async function handleWebhook(request, env, ctx) {
         try {
           await env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 });
           await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "sip, tunggu bentar ya! aku cek dulu status koneksinya...");
-          const quotaStatus = await checkGeminiQuota(env);
+          const geminiStatus = env.GEMINI_API_KEYS ? await checkGeminiQuota(env) : "";
+          const groqStatus = env.GROQ_API_KEY ? await checkGroqQuota(env) : "";
+          const quotaStatus = [geminiStatus, groqStatus].filter(Boolean).join("\n\n");
           await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, quotaStatus);
         } catch (err) {
           console.error("Quota Check Error:", err);
