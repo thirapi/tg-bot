@@ -257,11 +257,28 @@ async function main() {
     if (status.trim()) {
       const { commitMessage, branchName, prTitle, prBody } = result;
 
+      const generateFromInstruction = () => {
+        const short = safeInstruction
+          .replace(/[^a-zA-Z0-9\s]/g, '')
+          .trim()
+          .split(/\s+/)
+          .slice(0, 8)
+          .join(' ');
+        const branch = safeInstruction
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 50);
+        return { commit: short || 'apply changes', branch: branch || 'auto-changes' };
+      };
+
+      const fallback = generateFromInstruction();
+
       const commitMsg = commitMessage
         ? `${commitMessage}\n\nCo-authored-by: thirapi <132630759+thirapi@users.noreply.github.com>`
-        : `feat: auto-fix instruction applied\n\nCo-authored-by: thirapi <132630759+thirapi@users.noreply.github.com>`;
+        : `feat: ${fallback.commit}\n\nCo-authored-by: thirapi <132630759+thirapi@users.noreply.github.com>`;
 
-      let cleanBranchName = (branchName || `auto-fix/${Date.now()}`)
+      let cleanBranchName = (branchName || fallback.branch)
         .replace(/[^a-zA-Z0-9-]/g, '-')
         .replace(/-+/g, '-');
       if (cleanBranchName.startsWith('-')) cleanBranchName = cleanBranchName.substring(1);
@@ -294,7 +311,7 @@ async function main() {
 
         execFileSync('gh', [
           'pr', 'create',
-          '--title', prTitle || 'Auto-fix',
+          '--title', prTitle || fallback.commit,
           '--body', finalPrBody,
           '--head', cleanBranchName,
           '--base', 'main'

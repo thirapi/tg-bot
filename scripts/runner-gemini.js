@@ -99,18 +99,18 @@ const toolsDefinition = [
       },
       {
         name: "finishTask",
-        description: "Panggil ini setelah semua tugas selesai. Di mode 'analysis': isi parameter analysis dengan laporan. Di mode 'code': ini akan trigger commit dan PR.",
+        description: "Panggil ini setelah semua tugas selesai. Di mode 'code': WAJIB isi commitMessage, branchName, prTitle yang deskriptif sesuai pekerjaan yang dilakukan.",
         parameters: {
           type: "OBJECT",
           properties: {
-            commitMessage: { type: "STRING", description: "Pesan commit (opsional di mode analysis)." },
-            branchName: { type: "STRING", description: "Nama branch (opsional di mode analysis)." },
-            prTitle: { type: "STRING", description: "Judul Pull Request (opsional di mode analysis)." },
-            prBody: { type: "STRING", description: "Deskripsi Pull Request atau laporan singkat (opsional di mode analysis)." },
+            commitMessage: { type: "STRING", description: "Mode CODE (WAJIB): pesan commit deskriptif dalam bahasa Inggris, contoh: 'feat: add dark mode toggle component'. Mode analysis: abaikan." },
+            branchName: { type: "STRING", description: "Mode CODE (WAJIB): nama branch pendek deskriptif dalam format kebab-case, contoh: 'feat/add-dark-mode'. Mode analysis: abaikan." },
+            prTitle: { type: "STRING", description: "Mode CODE (WAJIB): judul PR deskriptif. Mode analysis: abaikan." },
+            prBody: { type: "STRING", description: "Mode CODE: body PR opsional. Mode analysis: isi dengan laporan analisis." },
             hasModifications: { type: "BOOLEAN", description: "Set ke true jika ada perubahan file. Di mode code, ini WAJIB true kecuali emang gak ada yg perlu diubah. Di mode analysis, selalu false." },
             analysis: { type: "STRING", description: "Mode analysis: laporan analisis lengkap. Mode code: gausa diisi." }
           },
-          required: ["hasModifications"]
+          required: ["hasModifications", "commitMessage", "branchName", "prTitle"]
         }
       }
     ]
@@ -141,7 +141,8 @@ PENTING - BACA DENGAN SEKSAMA:
 8. Perintah \`cd\` di dalam \`runCommand\` tidak bersifat persisten. Gabungkan dengan '&&' jika perlu (contoh: \`cd folder && npm run build\`).
 9. LANGKAH 3 (Verifikasi - WAJIB): SETELAH mengimplementasikan kode, kamu WAJIB menjalankan perintah build/compile (seperti \`npm run build\`, \`npx tsc --noEmit\`, atau perintah yang sesuai) melalui \`runCommand\` UNTUK MEMVERIFIKASI bahwa kode yang kamu tulis tidak mengandung error sintaks atau type error. Jika build gagal, BACA error-nya, perbaiki dengan \`patchFile\` atau \`writeFile\`, dan ulangi build hingga SUKSES. JANGAN LANJUTKAN ke \`finishTask\` sebelum build berhasil.
 10. LANGKAH 4 (Selesai): Jika seluruh instruksi user sudah diimplementasikan DAN build/compile sudah sukses, panggil \`finishTask\`.
-11. JIKA VALIDASI GAGAL 2 KALI: baca ulang file yang bermasalah, perbaiki, lalu coba finishTask lagi. Jika masih gagal, coba finishTask dengan hasModifications=true (force) — lebih baik push partial daripada stuck selamanya.`;
+11. SAAT MEMANGGIL finishTask di mode CODE: WAJIB isi \`commitMessage\`, \`branchName\`, dan \`prTitle\` yang deskriptif dan sesuai dengan pekerjaan yang dilakukan. Contoh: commitMessage="feat: add responsive navbar component", branchName="feat/responsive-navbar", prTitle="Add responsive navbar component".
+12. JIKA VALIDASI GAGAL 2 KALI: baca ulang file yang bermasalah, perbaiki, lalu coba finishTask lagi. Jika masih gagal, coba finishTask dengan hasModifications=true (force) — lebih baik push partial daripada stuck selamanya.`;
 
 const analysisModeInstruction = `Kamu adalah Senior Code Analyst (Kokoa Analysis Agent) yang berjalan di dalam GitHub Actions Ubuntu Runner. Tugasmu adalah MEMBACA dan MENGANALISIS kode — BUKAN menulis atau memperbaikinya.
 
