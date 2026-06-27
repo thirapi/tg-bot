@@ -177,6 +177,37 @@ async function main() {
         }
         return `Catatan: File ${safePath} memang tidak ada.`;
       },
+      searchInFiles: async ({ keyword }) => {
+        if (!keyword || !keyword.trim()) {
+          return "Error: Keyword tidak boleh kosong.";
+        }
+        try {
+          const output = execSync(
+            `grep -rn --exclude-dir={node_modules,.next,dist,build} "${keyword}" .`,
+            { encoding: 'utf8', stdio: 'pipe', timeout: 30000 }
+          );
+          return output || "Tidak ditemukan hasil untuk keyword tersebut.";
+        } catch (error) {
+          if (error.status === 1) {
+            return "Tidak ditemukan hasil untuk keyword tersebut.";
+          }
+          return `[ERROR]\nstdout: ${error.stdout || ''}\nstderr: ${error.stderr || ''}`;
+        }
+      },
+      patchFile: async ({ path: filePath, searchBlock, replaceBlock }) => {
+        const safePath = normalizePath(filePath);
+        const fullPath = path.join(process.cwd(), safePath);
+        if (!fs.existsSync(fullPath)) {
+          return `Error: File ${safePath} tidak ditemukan.`;
+        }
+        const content = fs.readFileSync(fullPath, 'utf8');
+        if (!content.includes(searchBlock)) {
+          return `Error: searchBlock tidak ditemukan di file ${safePath}. Pastikan teks yang dicari cocok persis (termasuk indentasi/spasi).`;
+        }
+        const newContent = content.replace(searchBlock, replaceBlock);
+        fs.writeFileSync(fullPath, newContent, 'utf8');
+        return `Sukses: ${safePath} berhasil diubah (${searchBlock.length} chars diganti).`;
+      },
       runCommand: async ({ command }) => {
         const trimmedCommand = command.trim();
         if (trimmedCommand.startsWith('cd ') && !trimmedCommand.includes('&&') && !trimmedCommand.includes(';') && !trimmedCommand.includes('|')) {

@@ -63,6 +63,30 @@ const toolsDefinition = [
         }
       },
       {
+        name: "searchInFiles",
+        description: "Mencari teks/kata kunci di seluruh file dalam proyek (grep global). Gunakan ini untuk melacak di file dan baris mana suatu fungsi, variabel, atau kode tertentu berada. Mengecualikan node_modules, .next, dist, build.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            keyword: { type: "STRING", description: "Kata kunci atau pola regex yang ingin dicari." }
+          },
+          required: ["keyword"]
+        }
+      },
+      {
+        name: "patchFile",
+        description: "Mengganti sebagian kode (searchBlock) dalam file yang sudah ada dengan kode baru (replaceBlock). Alternatif yang LEBIH AMAN daripada writeFile jika hanya perlu mengedit beberapa baris pada file yang sudah ada. Gunakan ini ALIH-ALIH writeFile untuk perubahan kecil/lokal.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            path: { type: "STRING", description: "Path lengkap ke file yang akan dimodifikasi." },
+            searchBlock: { type: "STRING", description: "Kode/teks yang ada di file saat ini dan ingin diganti. HARUS cocok persis (termasuk indentasi/spasi)." },
+            replaceBlock: { type: "STRING", description: "Kode/teks baru sebagai pengganti." }
+          },
+          required: ["path", "searchBlock", "replaceBlock"]
+        }
+      },
+      {
         name: "runCommand",
         description: "Menjalankan perintah bash di terminal (contoh: 'npm run build', 'tsc', 'ls -la').",
         parameters: {
@@ -99,24 +123,25 @@ Tugasmu adalah memperbaiki kode, menambahkan fitur, atau memecahkan masalah berd
 Kamu memiliki akses langsung ke sistem file lokal melalui tools:
 - listDirectory: untuk melihat isi folder.
 - readFile: untuk membaca file (lakukan ini dulu sebelum mengedit!).
-- writeFile: untuk menulis / menimpa file. Untuk file BESAR, tulis dalam potongan (chunk) menggunakan parameter append=true.
+- searchInFiles: untuk mencari teks/kata kunci di seluruh file proyek (grep global). WAJIB gunakan ini jika ingin mencari fungsi, variabel, atau komponen tertentu.
+- writeFile: untuk menulis file baru atau menimpa file yang sudah ada.
+- patchFile: untuk mengganti sebagian kode dalam file yang sudah ada. Gunakan ini ALIH-ALIH writeFile jika hanya mengedit beberapa baris pada file yang sudah ada.
 - deleteFile: untuk menghapus file.
-- runCommand: untuk menjalankan perintah shell seperti 'npm install', 'npm run build', 'tsc --noEmit', atau 'grep'.
-- finishTask: panggil ini HANYA jika semua tugas sudah selesai, kode sudah verifikasi (build sukses), dan siap di-commit.
+- runCommand: untuk menjalankan perintah shell seperti 'npm install', 'npm run build', 'npx tsc --noEmit', atau 'grep'.
+- finishTask: panggil ini HANYA jika semua tugas sudah selesai, kode sudah diverifikasi (build/compile SUKSES), dan siap di-commit.
 
 PENTING - BACA DENGAN SEKSAMA:
-1. LANGKAH 1 (Eksplorasi): Gunakan \`listDirectory\` dan \`readFile\` untuk memahami isi proyek.
-2. JANGAN PERNAH menginstal dependensi atau melakukan build (seperti Vite, Astro, React, Next.js) sebelum kamu memastikan adanya file \`.gitignore\`. Jika \`.gitignore\` belum ada atau belum mengeklusi \`node_modules\`, \`dist\`, \`build\`, \`.next\`, \`.astro\`, \`.nuxt\`, \`out\`, atau file log, kamu WAJIB membuat atau memperbaruinya terlebih dahulu menggunakan tool \`writeFile\`.
-3. LANGKAH 2 (Eksekusi): Kamu WAJIB menggunakan tool \`writeFile\` untuk membuat atau mengedit file sesuai instruksi user. Jangan berhalusinasi telah membuat file jika kamu belum memanggil tool ini.
-4. JANGAN PERNAH memanggil \`finishTask\` jika kamu belum melakukan modifikasi kode menggunakan \`writeFile\`.
+1. LANGKAH 1 (Eksplorasi): Gunakan \`listDirectory\`, \`readFile\`, dan \`searchInFiles\` untuk memahami isi proyek. \`searchInFiles\` WAJIB digunakan untuk mencari fungsi/komponen tertentu.
+2. JANGAN PERNAH menginstal dependensi atau melakukan build sebelum memastikan file \`.gitignore\` sudah benar.
+3. LANGKAH 2 (Eksekusi): Gunakan \`patchFile\` untuk mengubah sebagian kecil file yang sudah ada. Gunakan \`writeFile\` hanya untuk file baru atau jika perubahan sangat besar. Jangan berhalusinasi telah membuat file jika kamu belum memanggil tool.
+4. JANGAN PERNAH memanggil \`finishTask\` jika kamu belum melakukan modifikasi kode.
 5. KAMU SUDAH DI ROOT REPO. Langsung buat file di direktori \`./\` (JANGAN gunakan \`mkdir\` atau \`git init\`).
 6. JANGAN PERNAH gunakan \`git add\`, \`git commit\`, atau \`git push\`. Executor akan melakukannya otomatis.
-7. JANGAN PERNAH menulis atau mengedit file (terutama berkas konfigurasi panjang atau workflow GitHub Actions) menggunakan tool \`runCommand\` (seperti \`echo "..." > file\`). Gunakan selalu tool \`writeFile\` untuk mencegah pemotongan karakter atau error interpretasi shell (bad substitution).
-8. Perintah \`cd\` di dalam \`runCommand\` tidak bersifat persisten ke pemanggilan tool berikutnya. Jika kamu perlu menjalankan perintah di direktori lain, gabungkan dengan operator '&&' (contoh: \`cd folder && npm run build\`).
-9. LANGKAH 3 (Verifikasi): Jika memungkinkan, jalankan perintah tes (contoh: \`npm run build\`).
-10. MENULIS FILE BESAR: Parameter content di writeFile terbatas (~4000 chars). Untuk file besar, tulis dalam potongan: panggil writeFile pertama dengan append=false, lalu panggil writeFile berikutnya dengan append=true untuk menambahkan sisanya. Gunakan readFile untuk memverifikasi hasilnya.
-11. LANGKAH 4 (Selesai): Jika seluruh instruksi user sudah diimplementasikan dan diverifikasi, panggil \`finishTask\`.
-12. JIKA VALIDASI GAGAL 2 KALI: baca ulang file yang bermasalah, perbaiki, lalu coba finishTask lagi. Jika masih gagal, coba finishTask dengan hasModifications=true (force) — lebih baik push partial daripada stuck selamanya.`;
+7. JANGAN PERNAH menulis file menggunakan \`runCommand\` (seperti \`echo "..." > file\`). Gunakan \`writeFile\` atau \`patchFile\`.
+8. Perintah \`cd\` di dalam \`runCommand\` tidak bersifat persisten. Gabungkan dengan '&&' jika perlu (contoh: \`cd folder && npm run build\`).
+9. LANGKAH 3 (Verifikasi - WAJIB): SETELAH mengimplementasikan kode, kamu WAJIB menjalankan perintah build/compile (seperti \`npm run build\`, \`npx tsc --noEmit\`, atau perintah yang sesuai) melalui \`runCommand\` UNTUK MEMVERIFIKASI bahwa kode yang kamu tulis tidak mengandung error sintaks atau type error. Jika build gagal, BACA error-nya, perbaiki dengan \`patchFile\` atau \`writeFile\`, dan ulangi build hingga SUKSES. JANGAN LANJUTKAN ke \`finishTask\` sebelum build berhasil.
+10. LANGKAH 4 (Selesai): Jika seluruh instruksi user sudah diimplementasikan DAN build/compile sudah sukses, panggil \`finishTask\`.
+11. JIKA VALIDASI GAGAL 2 KALI: baca ulang file yang bermasalah, perbaiki, lalu coba finishTask lagi. Jika masih gagal, coba finishTask dengan hasModifications=true (force) — lebih baik push partial daripada stuck selamanya.`;
 
 const analysisModeInstruction = `Kamu adalah Senior Code Analyst (Kokoa Analysis Agent) yang berjalan di dalam GitHub Actions Ubuntu Runner. Tugasmu adalah MEMBACA dan MENGANALISIS kode — BUKAN menulis atau memperbaikinya.
 
@@ -294,8 +319,13 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
             }).filter(Boolean)
           })).filter(h => h.parts.length > 0);
 
-          if (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].role === 'user') {
+          // Hapus entri model di akhir (functionCall yang belum sempat direspon)
+          while (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].role === 'model') {
             cleanHistory.pop();
+          }
+          // Pastikan history dimulai dengan role user
+          if (cleanHistory.length > 0 && cleanHistory[0].role === 'model') {
+            cleanHistory.shift();
           }
 
           console.log("Menunggu 10 detik sebelum rotasi key/model...");
