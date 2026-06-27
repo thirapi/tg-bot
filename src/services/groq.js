@@ -37,6 +37,50 @@ function buildTools() {
 
 const openAITools = buildTools();
 
+const ESSENTIAL_TOOLS = [
+  'remember', 'recall', 'recallAll', 'forget',
+  'setReminder', 'getReminders', 'deleteReminder',
+  'createTaskPlan', 'getTaskPlan', 'updateTaskStatus', 'clearTaskPlan',
+  'webSearch', 'webFetch',
+];
+
+const GITHUB_TOOLS = [
+  'listGitHubIssues', 'getPRDiff', 'createGitHubIssue', 'getFileContent',
+  'createOrUpdateFile', 'createPullRequest', 'mergePullRequest', 'addLabels',
+  'assignUser', 'createIssueComment', 'updateIssueState', 'updatePRState',
+  'listDirectoryContents', 'deleteFile', 'searchInFiles',
+  'triggerDeveloperWorkflow', 'checkWorkflowStatus',
+];
+
+const GITHUB_KEYWORDS = ['github', 'issue', 'pr', 'pull request', 'repo',
+  'repository', 'file', 'commit', 'code', 'branch', 'merge',
+  'workflow', 'deploy', 'clone', 'push', 'pull', 'git'];
+
+function extractLatestUserText(contents) {
+  for (let i = contents.length - 1; i >= 0; i--) {
+    if (contents[i].role === 'user') {
+      return contents[i].parts.filter(p => p.text).map(p => p.text).join(' ');
+    }
+  }
+  return '';
+}
+
+function selectTools(text) {
+  const lower = text.toLowerCase();
+  const needsGithub = GITHUB_KEYWORDS.some(kw => lower.includes(kw));
+
+  return openAITools.filter(tool => {
+    const name = tool.function.name;
+    if (ESSENTIAL_TOOLS.includes(name)) return true;
+    if (needsGithub && GITHUB_TOOLS.includes(name)) return true;
+    return false;
+  });
+}
+
+function estimateTokens(str) {
+  return Math.ceil(str.length / 4);
+}
+
 async function buildSystemMessage(env, chatId) {
   const personaReinforcement =
     "inget ya, kamu cocoa, bukan ai. jangan pernah pake emoji di chat. " +
@@ -232,13 +276,25 @@ export async function fetchGroqGenerate(model, key, contents, env, chatId) {
   const systemMessage = await buildSystemMessage(env, chatId);
   const messages = convertContentsToMessages(contents);
 
+  const userText = extractLatestUserText(contents);
+  const tools = selectTools(userText);
+
+  let convMessages = [systemMessage, ...messages];
+  const MAX_INPUT_TOKENS = 9000;
+
+  let estimated = estimateTokens(JSON.stringify({ messages: convMessages, tools }));
+  while (estimated > MAX_INPUT_TOKENS && convMessages.length > 4) {
+    convMessages.splice(1, 1);
+    estimated = estimateTokens(JSON.stringify({ messages: convMessages, tools }));
+  }
+
   const payload = {
     model,
-    messages: [systemMessage, ...messages],
-    tools: openAITools.length > 0 ? openAITools : undefined,
+    messages: convMessages,
+    tools: tools.length > 0 ? tools : undefined,
     tool_choice: "auto",
     temperature: 0.65,
-    max_tokens: 8192,
+    max_tokens: 4096,
   };
 
   const controller = new AbortController();
