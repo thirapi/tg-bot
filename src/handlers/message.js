@@ -39,7 +39,7 @@ function buildProviderConfigs(env) {
     });
   }
 
-  const priority = (env.AI_PROVIDERS || "gemini,groq")
+  const priority = (env.AI_PROVIDERS || "groq,gemini")
     .split(",").map((s) => s.trim());
   configs.sort((a, b) => priority.indexOf(a.name) - priority.indexOf(b.name));
 
