@@ -334,7 +334,7 @@ export class AgentSession {
       });
     }
 
-    const priority = (process.env.AI_PROVIDERS || "groq,gemini")
+    const priority = (process.env.AI_PROVIDERS || "gemini,groq")
       .split(",").map(s => s.trim()).filter(Boolean);
       
     this.providers.sort((a, b) => priority.indexOf(a.name) - priority.indexOf(b.name));

@@ -9,6 +9,7 @@ import {
 import { executeTool } from "../tools/executor.js";
 import { markdownToRichHtml } from "../utils/formatter.js";
 import { shuffleArray } from "../utils/array.js";
+import { logError } from "../utils/logger.js";
 import {
   getHistory,
   addHistory,
@@ -39,7 +40,7 @@ function buildProviderConfigs(env) {
     });
   }
 
-  const priority = (env.AI_PROVIDERS || "groq,gemini")
+  const priority = (env.AI_PROVIDERS || "gemini,groq")
     .split(",").map((s) => s.trim());
   configs.sort((a, b) => priority.indexOf(a.name) - priority.indexOf(b.name));
 
@@ -334,9 +335,10 @@ export async function processMessage(message, env) {
     }
     } catch (err) {
     console.error("processMessage Error:", err);
+    await logError(env, chatId, "processMessage", err);
     const userMsg = err.message.startsWith("duh,") || err.message.startsWith("server") || err.message.startsWith("gagal")
       ? err.message
-      : "yah eror... coba kirim lagi ya, moga abis ini lancar!";
+      : "yah eror... coba kirim lagi ya, moga abis ini lancar! (kalo mau liat detailnya, ketik /logs)";
     await sendTelegramMessage(
       env.TELEGRAM_BOT_TOKEN,
       chatId,

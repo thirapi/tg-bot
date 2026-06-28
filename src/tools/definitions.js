@@ -334,7 +334,7 @@ export const githubTools = [
       },
       {
         name: "triggerDeveloperWorkflow",
-        description: "DELEGASI tugas ke GitHub Actions. mode 'code': clone repo, nulis/ubah kode, commit, dan buat PR. mode 'analysis': clone repo, baca file, analisis struktur/flow/arsitektur, lalu lapor hasilnya — TIDAK nulis/commit apapun.",
+        description: "DELEGASI tugas ke GitHub Actions. WAJIB panggil ini untuk: (1) mode 'analysis' — kalo pengguna minta analisis kode multi-file, review arsitektur, atau analisis mendalam apapun; (2) mode 'code' — kalo pengguna minta bikin fitur, perbaiki bug, atau modifikasi kode. JANGAN coba lakukan analisis multi-file sendiri — selalu delegasikan ke sini.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -344,11 +344,11 @@ export const githubTools = [
             },
             instruction: {
               type: "STRING",
-              description: "Untuk mode 'code': instruksi perbaikan/penulisan kode. Untuk mode 'analysis': instruksi analisis (misal: 'analisa arsitektur dan flow aplikasi ini').",
+              description: "Untuk mode 'code': instruksi perbaikan/penulisan kode. Untuk mode 'analysis': instruksi analisis yang jelas (misal: 'analisa arsitektur, struktur folder, alur data, dependensi, dan beri rekomendasi perbaikan').",
             },
             mode: {
               type: "STRING",
-              description: "'code' (default): nulis kode, commit, PR. 'analysis': baca repo, analisis, lapor tanpa commit.",
+              description: "'analysis': clone repo, analisis struktur/flow/arsitektur, lapor — TIDAK nulis/commit. 'code' (default): clone, nulis/ubah kode, commit, buat PR.",
               enum: ["code", "analysis"],
             },
           },

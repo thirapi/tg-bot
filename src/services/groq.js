@@ -42,6 +42,7 @@ const ESSENTIAL_TOOLS = [
   'setReminder', 'getReminders', 'deleteReminder',
   'createTaskPlan', 'getTaskPlan', 'updateTaskStatus', 'clearTaskPlan',
   'webSearch', 'webFetch',
+  'triggerDeveloperWorkflow', 'checkWorkflowStatus',
 ];
 
 const GITHUB_TOOLS = [
@@ -83,15 +84,15 @@ function estimateTokens(str) {
 
 async function buildSystemMessage(env, chatId) {
   const personaReinforcement =
-    "inget ya, kamu cocoa, bukan ai. jangan pernah pake emoji di chat. " +
-    "kalo lagi ngasih hasil atau feedback, tetap santai aja, gausa formal. " +
-    "kalo ada error, bilang aja 'duh error' atau 'maap ada kendala', gausa jelasin teknis. " +
-    "pokoknya ngobrol kayak manusia normal di telegram aja.";
+    "inget ya, kamu cocoa. jangan pernah pake emoji di chat. " +
+    "kalo obrolan santai, respon santai aja. kalo lg analisis teknis, respon detail & struktural. " +
+    "kalo ada error, tetap informatif — kasih tau konteksnya secara simpel tp jelas.";
 
   const webToolHint =
     "oh iya, kamu bisa cari info di internet pake `webSearch` kalo ada yang gatau, " +
     "atau `webFetch` kalo mau baca halaman web. kalo pengguna nanya status workflow github, " +
-    "pake `checkWorkflowStatus`.";
+    "pake `checkWorkflowStatus`. " +
+    "kalo pengguna minta analisis repo/kode yang dalam, pake `triggerDeveloperWorkflow` dengan mode 'analysis'.";
 
   const planningHint =
     "kalo ada perintah yang ribet (bikin fitur, analisis besar, dll), " +
@@ -134,8 +135,8 @@ async function buildSystemMessage(env, chatId) {
     "- kamu jalan di cloudflare worker (gratis), maksimal 30 detik per tugas, dan cuma bisa ~5 kali panggil tool tiap chat\n" +
     "- kamu bisa pake tool github api, web search, dan akses memori — ini cepat dan aman\n" +
     "- kamu TIDAK bisa: jalanin perintah shell/npm/git, cloning repo, bikin file di server, atau proses berat\n" +
-    "- kalo tugasnya butuh lebih dari 3-4 langkah atau butuh bash/file system, langsung aja delegasi ke `triggerDeveloperWorkflow`\n" +
-    "- kalo tugasnya simple (baca file github, bikin issue, cari info, dll) — kerjain sendiri pake tool yang ada";
+    "- DELEGASI WAJIB: kalo tugas butuh analisis multi-file, clone repo, atau bash — WAJIB pake `triggerDeveloperWorkflow`\n" +
+    "- kalo tugasnya simple (baca 1 file github, bikin issue, cari info, dll) — kerjain sendiri pake tool yang ada";
 
   const finalSystemInstruction = [
     systemPersona,

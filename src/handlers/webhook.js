@@ -4,6 +4,7 @@ import { processMessage } from "./message.js";
 import { checkGeminiQuota } from "../services/gemini.js";
 import { checkGroqQuota } from "../services/groq.js";
 import { clearHistory } from "../db/index.js";
+import { logError, getRecentErrors } from "../utils/logger.js";
 
 export async function handleWebhook(request, env, ctx) {
   if (request.method !== "POST") {
@@ -60,7 +61,8 @@ export async function handleWebhook(request, env, ctx) {
           "/start atau /reset - hapus memori biar kita mulai dr awal lagi\n" +
           "/help - lihat daftar ini\n" +
           "/unblock - reset kalo tiba-tiba macet\n" +
-          "/quota atau /keys - cek status koneksi\n\n" +
+          "/quota atau /keys - cek status koneksi\n" +
+          "/logs atau /debug - liat log error terbaru\n\n" +
           "selain ngobrol, aku jg bisa bantu urusan github, cari info di internet, bikin pengingat, atau liat foto dan dengerin voice note kamu. tinggal bilang aja!";
         await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, helpMsg);
       })());
@@ -87,6 +89,29 @@ export async function handleWebhook(request, env, ctx) {
         } catch (err) {
           console.error("Unblock Error:", err);
           await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "aduh, gagal reset blacklist nih...");
+        }
+      })());
+      return new Response("OK", { status: 200 });
+    }
+
+    if (normalizedText === "/logs" || normalizedText === "/error" || normalizedText === "/debug") {
+      ctx.waitUntil((async () => {
+        try {
+          await env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 });
+          const errors = await getRecentErrors(env, chatId, 10);
+          if (errors.length === 0) {
+            await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "belum ada error yg tercatat.");
+            return;
+          }
+          const lines = errors.map((e, i) => {
+            const time = new Date(e.timestamp).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" });
+            return `${i + 1}. [${time}] (${e.context})\n   ${e.message}`;
+          });
+          const msg = `<b>error log terbaru:</b>\n\n${lines.join("\n\n")}`;
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, msg);
+        } catch (err) {
+          console.error("Logs fetch error:", err);
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "gagal ambil log error.");
         }
       })());
       return new Response("OK", { status: 200 });
@@ -142,6 +167,7 @@ export async function handleWebhook(request, env, ctx) {
 
   } catch (err) {
     console.error("Critical Webhook Error:", err);
+    await logError(env, "global", "webhook", err).catch(() => {});
     return new Response("OK", { status: 200 });
   }
 }
