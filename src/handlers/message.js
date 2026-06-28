@@ -67,6 +67,10 @@ export async function processMessage(message, env) {
     const maxHistory = MAX_HISTORY;
     let history = await getHistory(env, chatId, 15);
 
+    while (history.length > 0 && history[0].role !== "user") {
+      history.shift();
+    }
+
     let mediaData = null;
     let userPrompt = message.text || message.caption || "";
 
