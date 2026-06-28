@@ -1,5 +1,5 @@
 import { githubTools } from "../tools/definitions.js";
-import { getAllMemories } from "../db/index.js";
+import { getRecentMemories } from "../db/index.js";
 
 const personaReinforcement =
   "inget ya, kamu cocoa, bukan ai. jangan pernah pake emoji di chat. " +
@@ -44,9 +44,9 @@ export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
     "dan jujur tanpa sensor.";
   const timeContext = `[Sistem: Waktu saat ini di Jakarta/WIB adalah ${wibTime}.]`;
 
-  const memories = chatId ? await getAllMemories(env, chatId) : [];
+  const memories = chatId ? await getRecentMemories(env, chatId, 5) : [];
   const memoryContext = memories.length > 0
-    ? "[Memori tentang pengguna:]\n" + memories.map(m => `- ${m.key}: ${m.value}`).join("\n")
+    ? "[Memori terbaru:]\n" + memories.map(m => `- ${m.key}: ${m.value}`).join("\n") + "\n(ada " + (memories.length) + " memori terbaru ditampilkan. panggil recallAll untuk lihat semua)"
     : "";
 
   const limitsContext =

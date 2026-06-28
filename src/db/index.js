@@ -103,6 +103,18 @@ export async function getAllMemories(env, chatId) {
   }
 }
 
+export async function getRecentMemories(env, chatId, limit = 5) {
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT key, value FROM memories WHERE chat_id = ? ORDER BY updated_at DESC LIMIT ?`
+    ).bind(chatId, limit).all();
+    return results || [];
+  } catch (e) {
+    console.error("DB getRecentMemories error:", e);
+    return [];
+  }
+}
+
 export async function deleteMemory(env, chatId, key) {
   try {
     await env.DB.prepare(
@@ -110,6 +122,16 @@ export async function deleteMemory(env, chatId, key) {
     ).bind(chatId, key).run();
   } catch (e) {
     console.error("DB deleteMemory error:", e);
+  }
+}
+
+export async function deleteMemoriesByPrefix(env, chatId, prefix) {
+  try {
+    await env.DB.prepare(
+      `DELETE FROM memories WHERE chat_id = ? AND key LIKE ?`
+    ).bind(chatId, prefix + '%').run();
+  } catch (e) {
+    console.error("DB deleteMemoriesByPrefix error:", e);
   }
 }
 

@@ -31,6 +31,28 @@ async function workerCallback(type, data) {
   }
 }
 
+process.on('unhandledRejection', async (reason) => {
+  console.error('UNHANDLED REJECTION:', reason);
+  await workerCallback("workflow_result", {
+    status: "failed",
+    repo: TARGET_REPO,
+    error: `Unhandled Rejection: ${reason?.message || reason}`,
+    instruction: INSTRUCTION || "",
+  });
+  process.exit(1);
+});
+
+process.on('uncaughtException', async (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+  await workerCallback("workflow_result", {
+    status: "failed",
+    repo: TARGET_REPO,
+    error: `Uncaught Exception: ${err.message}`,
+    instruction: INSTRUCTION || "",
+  });
+  process.exit(1);
+});
+
 async function sendTelegramUpdate(message) {
   const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
   try {
@@ -230,6 +252,7 @@ async function main() {
 
     const agent = new AgentSession(safeInstruction, toolHandlers, async (statusMsg) => {
       await sendTelegramUpdate(statusMsg);
+      await workerCallback("memory", { key: "workflow_progress", value: statusMsg });
     }, isAnalysisMode);
 
     console.log(`Memulai Agent Loop (mode: ${isAnalysisMode ? 'analysis' : 'code'})...`);
@@ -299,6 +322,12 @@ async function main() {
         execFileSync('git', ['commit', '-m', commitMsg]);
         execSync(`git push ${authUrl} main`);
         await sendTelegramUpdate(`selesai! perubahan udah langsung aku push ke branch \`main\` ya!`);
+        await workerCallback("workflow_result", {
+          status: "success",
+          repo: TARGET_REPO,
+          branch: "main",
+          instruction: safeInstruction,
+        });
       } else {
         execSync(`git checkout -b ${cleanBranchName}`);
         execFileSync('git', ['commit', '-m', commitMsg]);
@@ -309,22 +338,40 @@ async function main() {
           finalPrBody += `\n\n---\n**Kokoa Dev Agent Report**\n**Original Instruction:**\n${safeInstruction}`;
         }
 
-        execFileSync('gh', [
+        const prUrl = execFileSync('gh', [
           'pr', 'create',
           '--title', prTitle || fallback.commit,
           '--body', finalPrBody,
           '--head', cleanBranchName,
           '--base', 'main'
-        ], { encoding: 'utf8' });
+        ], { encoding: 'utf8' }).trim();
 
         await sendTelegramUpdate(`selesai! branch \`${cleanBranchName}\` udah dibuat sama pr-nya juga udah dikirim ke \`main\`!`);
+        await workerCallback("workflow_result", {
+          status: "success",
+          repo: TARGET_REPO,
+          pr_url: prUrl,
+          branch: cleanBranchName,
+          instruction: safeInstruction,
+        });
       }
     } else {
       await sendTelegramUpdate(`selesai! kayaknya ga ada kode yang perlu diubah deh.`);
+      await workerCallback("workflow_result", {
+        status: "no_changes",
+        repo: TARGET_REPO,
+        instruction: safeInstruction,
+      });
     }
 
   } catch (error) {
     console.error('Fatal Error:', error);
+    await workerCallback("workflow_result", {
+      status: "failed",
+      repo: TARGET_REPO,
+      error: error.message,
+      instruction: safeInstruction,
+    });
     await sendTelegramUpdate(`waduh, ada kendala nih... coba liat log action github buat detailnya ya`);
     process.exit(1);
   }
