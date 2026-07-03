@@ -1,6 +1,7 @@
 import { execSync, execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { AgentSession } from './runner-gemini.js';
 import { webSearch, webFetch } from '../src/services/search.js';
 
@@ -88,6 +89,26 @@ async function fetchContext() {
     console.error('Fetch context error:', e.message);
     return null;
   }
+}
+
+function stubBranchName(instruction) {
+  const hash = crypto.createHash('sha256').update(instruction).digest('hex').slice(0, 7);
+  const words = instruction
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .trim()
+    .split(/\s+/)
+    .filter(w => w.length > 2)
+    .slice(0, 3)
+    .join('-');
+  return `kokoa/${words || 'task'}-${hash}`;
+}
+
+function remoteBranchExists(authUrl, branch) {
+  try {
+    const output = execSync(`git ls-remote --heads ${authUrl} ${branch}`, { encoding: 'utf8', stdio: 'pipe' });
+    return output.trim().length > 0;
+  } catch { return false; }
 }
 
 async function main() {
@@ -301,36 +322,14 @@ async function main() {
     const status = execSync('git status --porcelain', { encoding: 'utf8' });
 
     if (status.trim()) {
-      const { commitMessage, branchName, prTitle, prBody } = result;
-
-      const generateFromInstruction = () => {
-        const short = safeInstruction
-          .replace(/[^a-zA-Z0-9\s]/g, '')
-          .trim()
-          .split(/\s+/)
-          .slice(0, 8)
-          .join(' ');
-        const branch = safeInstruction
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-+|-+$/g, '')
-          .slice(0, 50);
-        return { commit: short || 'apply changes', branch: branch || 'auto-changes' };
-      };
-
-      const fallback = generateFromInstruction();
-
+      const { commitMessage, prTitle, prBody } = result;
       const commitMsg = commitMessage
         ? `${commitMessage}\n\nCo-authored-by: thirapi <132630759+thirapi@users.noreply.github.com>`
-        : `feat: ${fallback.commit}\n\nCo-authored-by: thirapi <132630759+thirapi@users.noreply.github.com>`;
-
-      let cleanBranchName = (branchName || fallback.branch)
-        .replace(/[^a-zA-Z0-9-]/g, '-')
-        .replace(/-+/g, '-');
-      if (cleanBranchName.startsWith('-')) cleanBranchName = cleanBranchName.substring(1);
+        : `feat: update\n\nCo-authored-by: thirapi <132630759+thirapi@users.noreply.github.com>`;
 
       const originUrl = execSync('git config --get remote.origin.url', { encoding: 'utf8' }).trim();
       const authUrl = originUrl.replace('https://github.com/', `https://x-access-token:${GLOBAL_WORKER_PAT}@github.com/`);
+      const branchName = stubBranchName(safeInstruction);
 
       await workerCallback("memory", {
         key: "last_workflow_repo",
@@ -341,41 +340,37 @@ async function main() {
         value: safeInstruction,
       });
 
-      if (cleanBranchName === 'main') {
-        execFileSync('git', ['commit', '-m', commitMsg]);
-        execSync(`git push ${authUrl} main`);
-        await sendTelegramUpdate(`selesai! perubahan udah langsung aku push ke branch \`main\` ya!`);
+      const alreadyExists = remoteBranchExists(authUrl, branchName);
+
+      if (alreadyExists) {
+        execSync(`git fetch origin ${branchName}`, { stdio: 'pipe' });
+        execSync(`git checkout ${branchName}`, { stdio: 'pipe' });
+        execSync(`git rebase main`, { stdio: 'pipe' });
+        execFileSync('git', ['commit', '--allow-empty', '-m', commitMsg]);
+        execSync(`git push ${authUrl} ${branchName} --force-with-lease`, { stdio: 'pipe' });
+        await sendTelegramUpdate(`branch \`${branchName}\` udah aku update! PR yang ada bakal ke-update otomatis.`);
         await workerCallback("workflow_result", {
-          status: "success",
-          repo: TARGET_REPO,
-          branch: "main",
-          instruction: safeInstruction,
+          status: "success", repo: TARGET_REPO,
+          branch: branchName, instruction: safeInstruction,
         });
       } else {
-        execSync(`git checkout -b ${cleanBranchName}`);
+        execSync(`git checkout -b ${branchName}`);
         execFileSync('git', ['commit', '-m', commitMsg]);
-        execSync(`git push ${authUrl} ${cleanBranchName}`);
+        execSync(`git push ${authUrl} ${branchName}`, { stdio: 'pipe' });
 
-        let finalPrBody = prBody || `**Kokoa Dev Agent Report**\n\n**Original Instruction:**\n${safeInstruction}`;
-        if (!finalPrBody.includes('Original Instruction')) {
-          finalPrBody += `\n\n---\n**Kokoa Dev Agent Report**\n**Original Instruction:**\n${safeInstruction}`;
-        }
-
+        const finalPrBody = prBody || `**Kokoa Dev Agent Report**\n\n**Original Instruction:**\n${safeInstruction}`;
         const prUrl = execFileSync('gh', [
           'pr', 'create',
-          '--title', prTitle || fallback.commit,
+          '--title', prTitle || branchName.replace(/^kokoa\//, ''),
           '--body', finalPrBody,
-          '--head', cleanBranchName,
+          '--head', branchName,
           '--base', 'main'
         ], { encoding: 'utf8' }).trim();
 
-        await sendTelegramUpdate(`selesai! branch \`${cleanBranchName}\` udah dibuat sama pr-nya juga udah dikirim ke \`main\`!`);
+        await sendTelegramUpdate(`branch \`${branchName}\` + PR baru udah dibuat!`);
         await workerCallback("workflow_result", {
-          status: "success",
-          repo: TARGET_REPO,
-          pr_url: prUrl,
-          branch: cleanBranchName,
-          instruction: safeInstruction,
+          status: "success", repo: TARGET_REPO,
+          pr_url: prUrl, branch: branchName, instruction: safeInstruction,
         });
       }
     } else {

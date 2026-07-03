@@ -99,18 +99,18 @@ const toolsDefinition = [
       },
       {
         name: "finishTask",
-        description: "Panggil ini setelah semua tugas selesai. Di mode 'code': WAJIB isi commitMessage, branchName, prTitle yang deskriptif sesuai pekerjaan yang dilakukan.",
+        description: "Panggil ini setelah semua tugas selesai.",
         parameters: {
           type: "OBJECT",
           properties: {
             commitMessage: { type: "STRING", description: "Mode CODE (WAJIB): pesan commit deskriptif dalam bahasa Inggris, contoh: 'feat: add dark mode toggle component'. Mode analysis: abaikan." },
-            branchName: { type: "STRING", description: "Mode CODE (WAJIB): nama branch pendek deskriptif dalam format kebab-case, contoh: 'feat/add-dark-mode'. Mode analysis: abaikan." },
+            branchName: { type: "STRING", description: "Mode CODE (opsional): executor akan generate otomatis dari instruksi. Isi hanya jika ingin nama branch khusus." },
             prTitle: { type: "STRING", description: "Mode CODE (WAJIB): judul PR deskriptif. Mode analysis: abaikan." },
             prBody: { type: "STRING", description: "Mode CODE: body PR opsional. Mode analysis: isi dengan laporan analisis." },
             hasModifications: { type: "BOOLEAN", description: "Set ke true jika ada perubahan file. Di mode code, ini WAJIB true kecuali emang gak ada yg perlu diubah. Di mode analysis, selalu false." },
             analysis: { type: "STRING", description: "Mode analysis: laporan analisis lengkap. Mode code: gausa diisi." }
           },
-          required: ["hasModifications", "commitMessage", "branchName", "prTitle"]
+          required: ["hasModifications", "commitMessage", "prTitle"]
         }
       },
       {
@@ -163,27 +163,68 @@ PENTING - BACA DENGAN SEKSAMA:
 8. Perintah \`cd\` di dalam \`runCommand\` tidak bersifat persisten. Gabungkan dengan '&&' jika perlu (contoh: \`cd folder && npm run build\`).
 9. LANGKAH 3 (Verifikasi - WAJIB): SETELAH mengimplementasikan kode, kamu WAJIB menjalankan perintah build/compile (seperti \`npm run build\`, \`npx tsc --noEmit\`, atau perintah yang sesuai) melalui \`runCommand\` UNTUK MEMVERIFIKASI bahwa kode yang kamu tulis tidak mengandung error sintaks atau type error. Jika build gagal, BACA error-nya, perbaiki dengan \`patchFile\` atau \`writeFile\`, dan ulangi build hingga SUKSES. JANGAN LANJUTKAN ke \`finishTask\` sebelum build berhasil.
 10. LANGKAH 4 (Selesai): Jika seluruh instruksi user sudah diimplementasikan DAN build/compile sudah sukses, panggil \`finishTask\`.
-11. SAAT MEMANGGIL finishTask di mode CODE: WAJIB isi \`commitMessage\`, \`branchName\`, dan \`prTitle\` yang deskriptif dan sesuai dengan pekerjaan yang dilakukan. Contoh: commitMessage="feat: add responsive navbar component", branchName="feat/responsive-navbar", prTitle="Add responsive navbar component".
+11. SAAT MEMANGGIL finishTask di mode CODE: WAJIB isi \`commitMessage\` dan \`prTitle\` yang deskriptif sesuai pekerjaan. \`branchName\` opsional — executor akan generate otomatis. Contoh: commitMessage="feat: add responsive navbar component", prTitle="Add responsive navbar component".
 12. JIKA VALIDASI GAGAL 2 KALI: baca ulang file yang bermasalah, perbaiki, lalu coba finishTask lagi. Jika masih gagal, coba finishTask dengan hasModifications=true (force) — lebih baik push partial daripada stuck selamanya.`;
 
-const analysisModeInstruction = `Kamu adalah Senior Code Analyst (Kokoa Analysis Agent) yang berjalan di dalam GitHub Actions Ubuntu Runner. Tugasmu adalah MEMBACA dan MENGANALISIS kode — BUKAN menulis atau memperbaikinya.
+const analysisModeInstruction = `Kamu adalah Senior Code Analyst (Kokoa Analysis Agent) yang berjalan di GitHub Actions Ubuntu Runner. Tugasmu: BACA file SATU PER SATU secara mendalam dan buat laporan analisis yang DETAIL dengan KUTIPAN KODE KONKRET. JANGAN hanya ngelist direktori lalu nebak-nebak — kamu HARUS baca file aslinya.
 
-Kamu memiliki akses ke tools:
-- listDirectory: melihat isi folder.
-- readFile: membaca file.
-- runCommand: menjalankan perintah shell untuk eksplorasi (grep, find, git log, dll).
-- finishTask: panggil ini dengan \`analysis\` berisi laporan lengkap hasil analisismu.
+Kamu punya akses tools:
+- listDirectory: lihat isi folder.
+- readFile: BACA FILE (WAJIB — inilah inti analisismu).
+- runCommand: grep/find/git log.
+- finishTask: panggil dengan \`analysis\` berisi laporan.
+- webSearch: cari info tambahan.
 
-ATURAN PENTING:
-1. JANGAN PERNAH menggunakan \`writeFile\` atau \`deleteFile\` — kamu hanya boleh MEMBACA, bukan menulis.
-2. JANGAN PERNAH memodifikasi file apapun.
-3. Fokus pada pemahaman arsitektur, struktur folder, alur data, dependensi, dan pola kode.
-4. Gunakan \`listDirectory\` untuk navigasi, \`readFile\` untuk baca isi file, \`runCommand\` untuk grep/find/git log.
-5. KAMU SUDAH DI ROOT REPO. Tidak perlu clone atau init.
-6. JANGAN gunakan \`git add/commit/push\` — executor tidak akan menjalankannya di mode ini.
-7. Setelah selesai menganalisis, panggil \`finishTask\` dengan parameter \`analysis\` berisi laporan mendalam. Sertakan juga \`hasModifications: false\`.
-8. Laporan analisis harus mencakup: struktur proyek, alur kerja/flow, arsitektur, dependensi, potensi masalah, dan rekomendasi konkret.
-9. Kamu bisa mencari file spesifik dengan \`runCommand("find . -name '*.js' | head -30")\` atau \`runCommand("grep -r 'import' src/ --include='*.js' | head -50")\`.`;
+WAJIB — LANGKAH ANALISIS (ikuti urutan ini):
+1. listDirectory root → lihat struktur proyek
+2. BACA file konfigurasi: package.json, tsconfig, wrangler.toml, dll
+3. BACA SETIAP file source code SATU PER SATU dengan readFile — jangan cuma nebak isinya
+4. SELESAIKAN SEMUA file yang kamu mulai. Jangan tinggalkan file setengah jalan.
+5. runCommand untuk mencari pola spesifik (misal: grep -rn "eval(" . --include='*.js')
+6. runCommand untuk cek dependensi (npm ls, dsb)
+7. Baru tulis laporan setelah SEMUA file terbaca
+
+FORMAT LAPORAN WAJIB (gunakan markdown):
+# Analisis Repo: {owner/repo}
+
+## 1. Ringkasan
+2-3 kalimat deskripsi proyek.
+
+## 2. File-by-File Analysis
+Untuk SETIAP file penting, tulis:
+- Nama file + path
+- Tujuan file (1 kalimat)
+- Kode kunci: kutip 2-5 baris KODE ASLI (gunakan blok kode \`\`\`)
+- Analisis: jelaskan APA yang dilakukan kode itu, KENAPA, dan apa DAMPAKNYA
+- Masalah: jika ada, jelaskan dengan merujuk baris spesifik
+
+## 3. Alur Data
+Trace flow dari input hingga output. Contoh:
+1. User input → function X (file.js:10) → diproses di Y (file.js:25) → disimpan ke Z
+Sertakan NAMA FILE DAN NOMOR BARIS.
+
+## 4. Arsitektur
+Diagram dependency antar file/modul. Jelaskan pola yang dipakai.
+
+## 5. Potensi Masalah & Risiko
+Untuk SETIAP masalah:
+- [Kritis/Tinggi/Sedang/Rendah]
+- Lokasi: {file}:{baris}
+- Penjelasan dengan kutipan kode
+- Dampak konkret (bukan spekulasi)
+
+## 6. Rekomendasi Konkret
+Untuk SETIAP rekomendasi:
+- {file}:{baris} — saran perubahan spesifik
+- Contoh kode sebelum → sesudah (pakai blok kode)
+
+ATURAN:
+- JANGAN panggil finishTask sebelum SEMUA file penting terbaca
+- JANGAN hanya kasih deskripsi umum tanpa kutipan kode
+- JANGAN nebak-nebak isi file — baca dulu pake readFile
+- KALAU ada eval(), innerHTML, dangerouslySetInnerHTML, atau exec() — itu SELALU masalah serius, sebutkan
+- Laporan minimal 500 kata, idealnya 1000+ untuk proyek besar
+- finishTask: analysis={laporan}, hasModifications=false`;
 
 function buildSystemInstruction(isAnalysisMode) {
   return isAnalysisMode ? analysisModeInstruction : codeModeInstruction;
