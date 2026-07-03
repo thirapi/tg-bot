@@ -112,6 +112,28 @@ const toolsDefinition = [
           },
           required: ["hasModifications", "commitMessage", "branchName", "prTitle"]
         }
+      },
+      {
+        name: "webSearch",
+        description: "Mencari informasi terkini di internet berdasarkan query.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "Kata kunci pencarian." }
+          },
+          required: ["query"]
+        }
+      },
+      {
+        name: "webFetch",
+        description: "Membaca isi halaman web dari URL.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            url: { type: "STRING", description: "URL halaman yang ingin dibaca." }
+          },
+          required: ["url"]
+        }
       }
     ]
   }
@@ -299,11 +321,12 @@ class AIResponse {
 }
 
 export class AgentSession {
-  constructor(instruction, toolHandlers, onStatusUpdate, analysisMode = false) {
+  constructor(instruction, toolHandlers, onStatusUpdate, analysisMode = false, context = null) {
     this.instruction = instruction;
     this.toolHandlers = toolHandlers;
     this.onStatusUpdate = onStatusUpdate || (async () => { });
     this.analysisMode = analysisMode;
+    this.context = context;
     this.history = [];
     this._lastModelParts = null;
 
@@ -611,15 +634,33 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
 
   async start() {
     this.history = [];
+
+    let contextPreamble = '';
+    if (this.context) {
+      if (this.context.memories?.length > 0) {
+        contextPreamble += 'MEMORI DARI PERCAKAPAN SEBELUMNYA:\n' +
+          this.context.memories.map(m => `- ${m.key}: ${m.value}`).join('\n') + '\n\n';
+      }
+      if (this.context.task_plan?.length > 0) {
+        contextPreamble += 'RENCANA TUGAS:\n' +
+          this.context.task_plan.map(t => `- [${t.status}] ${t.title}`).join('\n') + '\n\n';
+      }
+      if (this.context.history?.length > 0) {
+        contextPreamble += 'RIWAYAT PERCAKAPAN SEBELUMNYA:\n' +
+          this.context.history.slice(-5).map(h =>
+            `[${h.role}]: ${h.parts?.map(p => p.text).filter(Boolean).join(' ').substring(0, 200)}`
+          ).join('\n') + '\n\n';
+      }
+    }
     
     let isTaskFinished = false;
     let finalResult = null;
-    let nextMessage = `INSTRUKSI USER: ${this.instruction}\n\nLakukan tugas ini secara bertahap menggunakan tools.`;
+    let nextMessage = `INSTRUKSI USER: ${this.instruction}\n\n${contextPreamble}Lakukan tugas ini secara bertahap menggunakan tools.`;
     
     this.history.push({ role: "user", parts: [{ text: nextMessage }] });
 
     let loopCount = 0;
-    const MAX_LOOPS = 30;
+    const MAX_LOOPS = 100;
     let validationFailCount = 0;
     let lastNonFinishTool = null;
 
@@ -631,7 +672,7 @@ Format keluaran kamu harus berupa JSON dengan skema berikut:
       try {
         console.log(`\n--- Agent Loop ${loopCount} ---`);
 
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
         const textOutput = response.text();
         if (textOutput) {

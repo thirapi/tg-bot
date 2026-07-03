@@ -35,11 +35,28 @@ CREATE TABLE IF NOT EXISTS reminders (
   chat_id TEXT NOT NULL,
   title TEXT NOT NULL,
   trigger_at INTEGER NOT NULL,
-  recurring INTEGER NOT NULL DEFAULT 0,
-  interval_seconds INTEGER NOT NULL DEFAULT 0,
-  last_triggered INTEGER,
-  created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  recurring INTEGER DEFAULT 0,
+  interval_seconds INTEGER DEFAULT 0,
+  last_triggered INTEGER DEFAULT NULL,
+  created_at INTEGER DEFAULT (unixepoch())
 );
+
+CREATE TABLE IF NOT EXISTS gha_context (
+  id TEXT PRIMARY KEY,
+  chat_id TEXT NOT NULL,
+  instruction TEXT NOT NULL DEFAULT '',
+  mode TEXT NOT NULL DEFAULT 'code',
+  repo TEXT NOT NULL DEFAULT '',
+  history TEXT DEFAULT '[]',
+  memories TEXT DEFAULT '[]',
+  task_plan TEXT DEFAULT 'null',
+  previous_result TEXT DEFAULT 'null',
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER DEFAULT (unixepoch()),
+  consumed_at INTEGER DEFAULT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gha_context_chat_id ON gha_context (chat_id);
+CREATE INDEX IF NOT EXISTS idx_gha_context_status ON gha_context (status);
 
 CREATE INDEX IF NOT EXISTS idx_reminders_trigger
   ON reminders(trigger_at);

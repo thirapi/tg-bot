@@ -262,3 +262,73 @@ export async function clearTasks(env, chatId) {
     console.error("DB clearTasks error:", e);
   }
 }
+
+export async function saveGHAContext(env, context) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO gha_context (id, chat_id, instruction, mode, repo, history, memories, task_plan, previous_result, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         instruction = excluded.instruction,
+         mode = excluded.mode,
+         repo = excluded.repo,
+         history = excluded.history,
+         memories = excluded.memories,
+         task_plan = excluded.task_plan,
+         previous_result = excluded.previous_result,
+         status = excluded.status`
+    ).bind(
+      context.id,
+      context.chat_id,
+      context.instruction || '',
+      context.mode || 'code',
+      context.repo || '',
+      JSON.stringify(context.history || []),
+      JSON.stringify(context.memories || []),
+      JSON.stringify(context.task_plan || null),
+      JSON.stringify(context.previous_result || null),
+      context.status || 'pending'
+    ).run();
+    return context.id;
+  } catch (e) {
+    console.error("DB saveGHAContext error:", e);
+    return null;
+  }
+}
+
+export async function getGHAContext(env, id) {
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT * FROM gha_context WHERE id = ?`
+    ).bind(id).all();
+    if (results.length === 0) return null;
+    const row = results[0];
+    return {
+      id: row.id,
+      chat_id: row.chat_id,
+      instruction: row.instruction,
+      mode: row.mode,
+      repo: row.repo,
+      history: JSON.parse(row.history || '[]'),
+      memories: JSON.parse(row.memories || '[]'),
+      task_plan: JSON.parse(row.task_plan || 'null'),
+      previous_result: JSON.parse(row.previous_result || 'null'),
+      status: row.status,
+      created_at: row.created_at,
+      consumed_at: row.consumed_at,
+    };
+  } catch (e) {
+    console.error("DB getGHAContext error:", e);
+    return null;
+  }
+}
+
+export async function consumeGHAContext(env, id) {
+  try {
+    await env.DB.prepare(
+      `UPDATE gha_context SET status = 'consumed', consumed_at = unixepoch() WHERE id = ?`
+    ).bind(id).run();
+  } catch (e) {
+    console.error("DB consumeGHAContext error:", e);
+  }
+}

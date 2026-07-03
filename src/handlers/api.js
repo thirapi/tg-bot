@@ -1,4 +1,4 @@
-import { updateTaskStatus, setMemory, deleteMemoriesByPrefix } from "../db/index.js";
+import { updateTaskStatus, setMemory, deleteMemoriesByPrefix, getGHAContext, consumeGHAContext, getMemory, saveGHAContext } from "../db/index.js";
 
 const CALLBACK_TOKEN = "kokoa-runner-secret";
 
@@ -104,6 +104,69 @@ export async function handleAPI(request, env, ctx) {
       console.error("API callback error:", e);
       return new Response("Bad Request", { status: 400 });
     }
+  }
+
+  if (path === "/api/context" || path.startsWith("/api/context/")) {
+    const contextId = path.startsWith("/api/context/") ? path.split("/api/context/")[1] : null;
+
+    if (request.method === "GET" && contextId) {
+      const auth = request.headers.get("Authorization");
+      if (auth !== `Bearer ${CALLBACK_TOKEN}`) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const ctx = await getGHAContext(env, contextId);
+      if (!ctx) {
+        return new Response("Not Found", { status: 404 });
+      }
+      await consumeGHAContext(env, contextId);
+      return new Response(JSON.stringify(ctx), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (request.method === "PUT" && contextId) {
+      const auth = request.headers.get("Authorization");
+      if (auth !== `Bearer ${CALLBACK_TOKEN}`) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const body = await request.json();
+      await saveGHAContext(env, { id: contextId, ...body });
+      return new Response("OK", { status: 200 });
+    }
+
+    return new Response("Method Not Allowed", { status: 405 });
+  }
+
+  if (path === "/api/memory" || path.startsWith("/api/memory/")) {
+    const auth = request.headers.get("Authorization");
+    if (auth !== `Bearer ${CALLBACK_TOKEN}`) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    if (request.method === "POST") {
+      const body = await request.json();
+      const { chat_id, key, value } = body;
+      if (chat_id && key && value) {
+        await setMemory(env, chat_id, key, value);
+        return new Response("OK", { status: 200 });
+      }
+      return new Response("Missing fields", { status: 400 });
+    }
+
+    if (request.method === "GET" && path.startsWith("/api/memory/")) {
+      const parts = path.split("/");
+      const chatId = parts[3];
+      const key = parts.slice(4).join("/");
+      if (chatId && key) {
+        const value = await getMemory(env, chatId, key);
+        return new Response(JSON.stringify({ key, value }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("Missing params", { status: 400 });
+    }
+
+    return new Response("Method Not Allowed", { status: 405 });
   }
 
   return new Response("Not Found", { status: 404 });

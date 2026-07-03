@@ -15,7 +15,11 @@ import {
   addHistory,
   trimHistory,
   clearHistory,
+  saveGHAContext,
+  getTasks,
+  getAllMemories,
 } from "../db/index.js";
+import { callGitHubAPI } from "../services/github.js";
 
 function buildProviderConfigs(env) {
   const configs = [];
@@ -45,6 +49,80 @@ function buildProviderConfigs(env) {
   configs.sort((a, b) => priority.indexOf(a.name) - priority.indexOf(b.name));
 
   return configs;
+}
+
+const HEAVY_FILE_TOOLS = new Set([
+  'getFileContent','createOrUpdateFile','searchInFiles','listDirectoryContents','deleteFile'
+]);
+
+function isHeavyTask(iteration, toolCalls, userMessage) {
+  const usedFileTools = toolCalls?.some(tc =>
+    HEAVY_FILE_TOOLS.has(tc.functionCall?.name)
+  );
+  const heavyKeywords = /(bikin|buat|ubah|refactor|analyze|analisa|test|build|deploy|install|tambah|hapus|perbaiki|fix|feature|fitur|tulis|koding|code|implement)/i;
+  const userHeavy = heavyKeywords.test(userMessage || '');
+  return usedFileTools || userHeavy || iteration >= 3;
+}
+
+function extractTargetRepo(toolCalls, currentContents) {
+  for (const tc of (toolCalls || [])) {
+    const args = tc.functionCall?.args || {};
+    if (args.owner && args.repo) return `${args.owner}/${args.repo}`;
+  }
+  for (const content of (currentContents || [])) {
+    for (const part of (content.parts || [])) {
+      if (part.text) {
+        const match = part.text.match(/\b([\w-]+)\/([\w.-]+)\b/g);
+        if (match) return match[0];
+      }
+    }
+  }
+  return null;
+}
+
+function buildEscalationInstruction(currentContents) {
+  const userParts = currentContents
+    .filter(c => c.role === 'user')
+    .map(c => c.parts.map(p => p.text).filter(Boolean).join(' '))
+    .filter(Boolean);
+  return userParts.join('\n') || 'melakukan task development berdasarkan konteks percakapan';
+}
+
+async function autoEscalate(env, chatId, currentContents, iteration, functionCalls) {
+  const contextId = crypto.randomUUID();
+  const repo = extractTargetRepo(functionCalls, currentContents) || '';
+  const instruction = buildEscalationInstruction(currentContents);
+  const history = currentContents.slice(-10);
+  const memories = await getAllMemories(env, chatId);
+  const taskPlan = await getTasks(env, chatId);
+
+  await saveGHAContext(env, {
+    id: contextId,
+    chat_id: chatId,
+    instruction,
+    mode: 'code',
+    repo,
+    history,
+    memories,
+    task_plan: taskPlan.length > 0 ? taskPlan : null,
+    status: 'pending',
+  });
+
+  const dispatchBody = {
+    event_type: 'kokoa-dev-task',
+    client_payload: {
+      target_repo: repo || 'thirapi/tg-bot',
+      instruction,
+      mode: 'code',
+      chat_id: chatId,
+      worker_url: env.WORKER_URL || '',
+      context_id: contextId,
+    },
+  };
+
+  const endpoint = 'repos/thirapi/tg-bot/dispatches';
+  await callGitHubAPI(env, endpoint, 'POST', dispatchBody);
+  return { contextId, repo, instruction };
 }
 
 export async function processMessage(message, env) {
@@ -117,6 +195,8 @@ export async function processMessage(message, env) {
 
     const failedProviders = new Set();
     let lastError = null;
+    let escalationHinted = false;
+    let escalationTriggered = false;
 
     while (iteration < MAX_AGENT_ITERATIONS) {
       iteration++;
@@ -268,6 +348,25 @@ export async function processMessage(message, env) {
           const { name, args } = call.functionCall;
           console.log(`Executing Tool: ${name}`, args);
           let result;
+
+          if (name === 'triggerDeveloperWorkflow') {
+            const contextId = crypto.randomUUID();
+            const history = currentContents.slice(-15);
+            const memories = await getAllMemories(env, chatId);
+            const taskPlan = await getTasks(env, chatId);
+            await saveGHAContext(env, {
+              id: contextId, chat_id: chatId,
+              instruction: args.instruction || '',
+              mode: args.mode || 'code',
+              repo: args.target_repo || '',
+              history, memories,
+              task_plan: taskPlan.length > 0 ? taskPlan : null,
+              status: 'pending',
+            });
+            args.context_id = contextId;
+            args.worker_url = env.WORKER_URL || '';
+          }
+
           try {
             result = await executeTool(name, args, env, chatId);
           } catch (toolErr) {
@@ -290,10 +389,36 @@ export async function processMessage(message, env) {
             },
           });
         }
+
+        if (!escalationTriggered && isHeavyTask(iteration, functionCalls, userPrompt)) {
+          const alreadyUsingGHA = functionCalls.some(tc => tc.functionCall?.name === 'triggerDeveloperWorkflow');
+          if (!alreadyUsingGHA) {
+            if (!escalationHinted) {
+              escalationHinted = true;
+              functionResponses.push({
+                functionResponse: {
+                  name: '_system_escalation',
+                  response: { content: 'PETUNJUK: Tugas ini butuh akses sistem yang lebih dalam. Delegasikan ke GitHub Actions runner dengan panggil tool `triggerDeveloperWorkflow`. Isi target_repo dengan format owner/repo dan instruction dengan instruksi jelas.' }
+                }
+              });
+            } else if (iteration >= 4) {
+              escalationTriggered = true;
+              const escResult = await autoEscalate(env, chatId, currentContents, iteration, functionCalls);
+              await sendTelegramMessage(
+                env.TELEGRAM_BOT_TOKEN,
+                chatId,
+                `tugas ini butuh akses sistem yang lebih dalam. aku kerjakan di GitHub Actions ya...\n\nrepo: \`${escResult.repo || 'thirapi/tg-bot'}\`\n\nnanti hasilnya aku kabarin kalo udah selesai!`
+              );
+            }
+          }
+        }
+
         currentContents.push({
           role: "function",
           parts: functionResponses,
         });
+
+        if (escalationTriggered) break;
         continue;
       }
 
@@ -307,7 +432,22 @@ export async function processMessage(message, env) {
       if (functionCalls.length === 0) break;
     }
 
-    if (finalText) {
+    if (escalationTriggered) {
+      const newContent = currentContents.slice(history.length);
+      if (newContent.length > 0) {
+        const cleaned = newContent.map(content => ({
+          role: content.role,
+          parts: content.parts.map(part => {
+            if (part.inline_data) {
+              return { text: `[Media: ${part.inline_data.mime_type}]` };
+            }
+            return part;
+          })
+        }));
+        await addHistory(env, chatId, cleaned);
+        await trimHistory(env, chatId, maxHistory);
+      }
+    } else if (finalText) {
       const richHtml = markdownToRichHtml(finalText);
       await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml);
 

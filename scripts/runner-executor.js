@@ -2,6 +2,7 @@ import { execSync, execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { AgentSession } from './runner-gemini.js';
+import { webSearch, webFetch } from '../src/services/search.js';
 
 const {
   TARGET_REPO,
@@ -10,6 +11,7 @@ const {
   GLOBAL_WORKER_PAT,
   TELEGRAM_BOT_TOKEN,
   WORKER_URL,
+  CONTEXT_ID,
   MODE,
 } = process.env;
 
@@ -74,8 +76,23 @@ function normalizePath(p) {
   return path.normalize(p).replace(/^(\.\.(\/|\\|$))+/, '');
 }
 
+async function fetchContext() {
+  if (!WORKER_URL || !CONTEXT_ID) return null;
+  try {
+    const res = await fetch(`${WORKER_URL}/api/context/${CONTEXT_ID}`, {
+      headers: { Authorization: 'Bearer kokoa-runner-secret' },
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    console.error('Fetch context error:', e.message);
+    return null;
+  }
+}
+
 async function main() {
   const safeInstruction = String(INSTRUCTION || '');
+  const contextData = await fetchContext();
 
   if (GLOBAL_WORKER_PAT) {
     process.env.GITHUB_TOKEN = GLOBAL_WORKER_PAT;
@@ -230,6 +247,12 @@ async function main() {
         fs.writeFileSync(fullPath, newContent, 'utf8');
         return `Sukses: ${safePath} berhasil diubah (${searchBlock.length} chars diganti).`;
       },
+      webSearch: async ({ query }) => {
+        return await webSearch(query);
+      },
+      webFetch: async ({ url }) => {
+        return await webFetch(url);
+      },
       runCommand: async ({ command }) => {
         const trimmedCommand = command.trim();
         if (trimmedCommand.startsWith('cd ') && !trimmedCommand.includes('&&') && !trimmedCommand.includes(';') && !trimmedCommand.includes('|')) {
@@ -253,7 +276,7 @@ async function main() {
     const agent = new AgentSession(safeInstruction, toolHandlers, async (statusMsg) => {
       await sendTelegramUpdate(statusMsg);
       await workerCallback("memory", { key: "workflow_progress", value: statusMsg });
-    }, isAnalysisMode);
+    }, isAnalysisMode, contextData);
 
     console.log(`Memulai Agent Loop (mode: ${isAnalysisMode ? 'analysis' : 'code'})...`);
     const result = await agent.start();

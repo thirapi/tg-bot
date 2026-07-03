@@ -32,5 +32,6 @@ jobs:
           AI_PROVIDERS: ${{ vars.AI_PROVIDERS }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           WORKER_URL: ${{ github.event.client_payload.worker_url }}
+          CONTEXT_ID: ${{ github.event.client_payload.context_id }}
           MODE: ${{ github.event.client_payload.mode }}
         run: node scripts/runner-executor.js

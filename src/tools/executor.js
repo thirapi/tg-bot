@@ -138,7 +138,8 @@ export async function executeTool(name, args, env, chatId) {
           instruction: args.instruction,
           mode,
           chat_id: chatId,
-          worker_url: env.WORKER_URL || "",
+          context_id: args.context_id || "",
+          worker_url: args.worker_url || env.WORKER_URL || "",
         },
       };
       await callGitHubAPI(env, dispatchEndpoint, "POST", body);
