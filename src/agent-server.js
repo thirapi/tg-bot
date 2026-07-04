@@ -1,4 +1,5 @@
 import { createServer } from 'http';
+import { execSync } from 'child_process';
 import { runAgentLoop, buildProviderConfigs } from './handlers/message.js';
 import { executeTool } from './tools/executor.js';
 import { executeSpacesTool, isSpacesTool } from './tools/spaces-executor.js';
@@ -8,6 +9,14 @@ async function hybridExecutor(name, args, env, chatId) {
     return executeSpacesTool(name, args, env, chatId);
   }
   return executeTool(name, args, env, chatId);
+}
+
+// Install system dependencies at startup
+try {
+  execSync('apt-get update -qq && apt-get install -y -qq git', { stdio: 'pipe', timeout: 60000 });
+  console.log('Git installed successfully');
+} catch (e) {
+  console.log('Git install failed (non-fatal):', e.message);
 }
 
 const PORT = parseInt(process.env.PORT || '7860', 10);
