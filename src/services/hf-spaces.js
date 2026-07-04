@@ -32,35 +32,29 @@ export async function processViaSpaces(env, chatId, userPrompt, mediaData, histo
 
   const result = await response.json();
 
+  const newContent = (result.newContents || currentContents).slice(history.length);
+  if (newContent.length > 0) {
+    const cleaned = newContent.map(c => ({
+      role: c.role,
+      parts: c.parts.map(p => {
+        if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
+        const cleaned = {};
+        if (p.text !== undefined) cleaned.text = p.text;
+        if (Object.keys(cleaned).length > 0) return cleaned;
+        if (p.functionCall) return { text: `[FunctionCall: ${p.functionCall.name}]` };
+        if (p.functionResponse) return { text: `[FunctionResponse: ${p.functionResponse.name}]` };
+        return { text: '' };
+      }).filter(p => p.text || Object.keys(p).length > 0)
+    }));
+    await addHistory(env, chatId, cleaned);
+    await trimHistory(env, chatId, maxHistory);
+  }
+
   if (result.escalationTriggered) {
-    const newContent = currentContents.slice(history.length);
-    if (newContent.length > 0) {
-      const cleaned = newContent.map(c => ({
-        role: c.role,
-        parts: c.parts.map(p => {
-          if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
-          return p;
-        })
-      }));
-      await addHistory(env, chatId, cleaned);
-      await trimHistory(env, chatId, maxHistory);
-    }
+    // already saved above
   } else if (result.finalText) {
     const richHtml = markdownToRichHtml(result.finalText);
     await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml);
-
-    const newContent = currentContents.slice(history.length);
-    if (newContent.length > 0) {
-      const cleaned = newContent.map(c => ({
-        role: c.role,
-        parts: c.parts.map(p => {
-          if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
-          return p;
-        })
-      }));
-      await addHistory(env, chatId, cleaned);
-      await trimHistory(env, chatId, maxHistory);
-    }
   } else {
     console.warn("Spaces did not provide final text output.");
     await sendTelegramMessage(
