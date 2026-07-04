@@ -1,5 +1,14 @@
 import { createServer } from 'http';
 import { runAgentLoop, buildProviderConfigs } from './handlers/message.js';
+import { executeTool } from './tools/executor.js';
+import { executeSpacesTool, isSpacesTool } from './tools/spaces-executor.js';
+
+async function hybridExecutor(name, args, env, chatId) {
+  if (isSpacesTool(name)) {
+    return executeSpacesTool(name, args, env, chatId);
+  }
+  return executeTool(name, args, env, chatId);
+}
 
 const PORT = parseInt(process.env.PORT || '7860', 10);
 
@@ -94,7 +103,7 @@ const server = createServer(async (req, res) => {
       const result = await runAgentLoop(
         currentContents, proxyEnv, chatId, userPrompt || '',
         providerConfigs, [], startTime,
-        { executionTimeout: 240000, iterationTimeout: 30000 }
+        { executionTimeout: 240000, iterationTimeout: 30000, toolExecutor: hybridExecutor }
       );
 
       const newContents = currentContents;

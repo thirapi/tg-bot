@@ -55,6 +55,7 @@ export function buildProviderConfigs(env) {
 export async function runAgentLoop(currentContents, env, chatId, userPrompt, providerConfigs, history, startTime, options = {}) {
   const maxTime = options.executionTimeout || EXECUTION_TIMEOUT;
   const iterTimeout = options.iterationTimeout || AGENT_ITERATION_TIMEOUT;
+  const execTool = options.toolExecutor || executeTool;
   let iteration = 0;
   let finalText = null;
   const failedProviders = new Set();
@@ -240,7 +241,7 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
 
           console.log(`Executing Tool: ${name}`, args);
           try {
-            const result = await executeTool(name, args, env, chatId);
+            const result = await execTool(name, args, env, chatId);
             toolCache.set(cacheKey, result);
             return result;
           } catch (toolErr) {
