@@ -33,6 +33,7 @@ function buildProxyEnv(envVars) {
     GEMINI_SYSTEM_PERSONA: envVars.GEMINI_SYSTEM_PERSONA || '',
     GEMINI_SYSTEM_INSTRUCTION: envVars.GEMINI_SYSTEM_INSTRUCTION || '',
     WORKER_URL: envVars.WORKER_URL || '',
+    IS_SPACES: 'true',
     CHAT_HISTORY: {
       get: async (key) => inMemoryKV.get(key) || null,
       put: async (key, value, opts) => {

@@ -531,3 +531,70 @@ export const githubTools = [
     ],
   },
 ];
+
+export const spacesTools = [
+  {
+    functionDeclarations: [
+      {
+        name: "cloneRepo",
+        description: "Clone GitHub repo ke filesystem lokal server. Cepet buat baca banyak file tanpa panggil GitHub API tiap kali.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            repo: { type: "STRING", description: "Nama repo lengkap (contoh: 'thirapi/tg-bot')." },
+            ref: { type: "STRING", description: "Branch/tag/commit (default: default branch)." },
+          },
+          required: ["repo"],
+        },
+      },
+      {
+        name: "readLocalFile",
+        description: "Baca file dari filesystem lokal (hasil cloneRepo). Path bisa dari hasil cloneRepo.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            path: { type: "STRING", description: "Path lengkap ke file di filesystem." },
+          },
+          required: ["path"],
+        },
+      },
+      {
+        name: "listLocalDir",
+        description: "Lihat isi direktori di filesystem lokal.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            path: { type: "STRING", description: "Path direktori yang mau dilihat." },
+          },
+          required: ["path"],
+        },
+      },
+      {
+        name: "grepLocalFiles",
+        description: "Cari teks/regex di file-file dalam direktori lokal. Mirip grep -r.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            path: { type: "STRING", description: "Base direktori buat nyari." },
+            pattern: { type: "STRING", description: "Pola regex yang dicari." },
+            include: { type: "STRING", description: "Filter ekstensi file (contoh: '*.js')." },
+          },
+          required: ["path", "pattern"],
+        },
+      },
+      {
+        name: "runCommand",
+        description: "Jalanin perintah shell (test, build, lint, dsb). Berguna untuk verifikasi atau task development cepat. WARNING: perintah bakal jalan di server -- hanya jalanin perintah yang aman.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            command: { type: "STRING", description: "Perintah shell yang mau dijalanin (contoh: 'npm test')." },
+            cwd: { type: "STRING", description: "Direktori kerja tempat jalanin perintah." },
+            timeout: { type: "NUMBER", description: "Timeout dalam detik (default: 30, max: 120)." },
+          },
+          required: ["command", "cwd"],
+        },
+      },
+    ],
+  },
+];

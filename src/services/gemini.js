@@ -1,4 +1,4 @@
-import { githubTools } from "../tools/definitions.js";
+import { githubTools, spacesTools } from "../tools/definitions.js";
 import { getRecentMemories } from "../db/index.js";
 
 const personaReinforcement =
@@ -94,10 +94,12 @@ export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
   ]
     .filter(Boolean)
     .join("\n\n");
+  const tools = env.IS_SPACES ? [...githubTools, ...spacesTools] : githubTools;
+
   const payload = {
     contents: sanitizedContents,
     systemInstruction: { parts: [{ text: finalSystemInstruction }] },
-    tools: githubTools,
+    tools,
     generationConfig: {
       temperature: 0.65,
       topP: 0.95,

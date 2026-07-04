@@ -1,4 +1,4 @@
-import { githubTools } from "../tools/definitions.js";
+import { githubTools, spacesTools } from "../tools/definitions.js";
 import { getRecentMemories } from "../db/index.js";
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
@@ -18,9 +18,9 @@ function convertParamsToOpenAI(params) {
   return result;
 }
 
-function buildTools() {
+function buildTools(source) {
   const tools = [];
-  for (const group of githubTools) {
+  for (const group of source) {
     for (const fn of group.functionDeclarations) {
       tools.push({
         type: "function",
@@ -35,7 +35,8 @@ function buildTools() {
   return tools;
 }
 
-const openAITools = buildTools();
+const openAITools = buildTools(githubTools);
+const spacesAITools = buildTools(spacesTools);
 
 const ESSENTIAL_TOOLS = [
   'remember', 'recall', 'recallAll', 'forget',
@@ -57,6 +58,13 @@ const GITHUB_KEYWORDS = ['github', 'issue', 'pr', 'pull request', 'repo',
   'repository', 'file', 'commit', 'code', 'branch', 'merge',
   'workflow', 'deploy', 'clone', 'push', 'pull', 'git'];
 
+const SPACES_TOOLS = [
+  'cloneRepo', 'readLocalFile', 'listLocalDir', 'grepLocalFiles', 'runCommand',
+];
+
+const SPACES_KEYWORDS = ['clone', 'test', 'build', 'lint', 'grep', 'local', 'shell',
+  'command', 'run', 'npm', 'node', 'compile', 'execute', 'terminal'];
+
 function extractLatestUserText(contents) {
   for (let i = contents.length - 1; i >= 0; i--) {
     if (contents[i].role === 'user') {
@@ -66,14 +74,18 @@ function extractLatestUserText(contents) {
   return '';
 }
 
-function selectTools(text) {
+function selectTools(text, isSpaces) {
   const lower = text.toLowerCase();
   const needsGithub = GITHUB_KEYWORDS.some(kw => lower.includes(kw));
+  const needsSpaces = isSpaces && SPACES_KEYWORDS.some(kw => lower.includes(kw));
+  let toolList = openAITools;
+  if (needsSpaces) toolList = [...toolList, ...spacesAITools];
 
-  return openAITools.filter(tool => {
+  return toolList.filter(tool => {
     const name = tool.function.name;
     if (ESSENTIAL_TOOLS.includes(name)) return true;
     if (needsGithub && GITHUB_TOOLS.includes(name)) return true;
+    if (needsSpaces && SPACES_TOOLS.includes(name)) return true;
     return false;
   });
 }
@@ -284,7 +296,7 @@ export async function fetchGroqGenerate(model, key, contents, env, chatId) {
   const messages = convertContentsToMessages(contents);
 
   const userText = extractLatestUserText(contents);
-  const tools = selectTools(userText);
+  const tools = selectTools(userText, env.IS_SPACES);
 
   let convMessages = [systemMessage, ...messages];
   const MAX_INPUT_TOKENS = 9000;

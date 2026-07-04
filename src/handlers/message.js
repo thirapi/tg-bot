@@ -61,6 +61,7 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
   let lastError = null;
   let escalationHinted = false;
   let escalationTriggered = false;
+  const toolCache = new Map();
 
   if (!startTime) startTime = Date.now();
 
@@ -209,13 +210,9 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
     const functionCalls = parts.filter((p) => p.functionCall);
 
     if (functionCalls.length > 0) {
-      const functionResponses = [];
       for (const call of functionCalls) {
-        const { name, args } = call.functionCall;
-        console.log(`Executing Tool: ${name}`, args);
-        let result;
-
-        if (name === 'triggerDeveloperWorkflow') {
+        if (call.functionCall.name === 'triggerDeveloperWorkflow') {
+          const { args } = call.functionCall;
           const contextId = crypto.randomUUID();
           const hist = currentContents.slice(-15);
           const memories = await getAllMemories(env, chatId);
@@ -232,30 +229,43 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
           args.context_id = contextId;
           args.worker_url = env.WORKER_URL || '';
         }
-
-        try {
-          result = await executeTool(name, args, env, chatId);
-        } catch (toolErr) {
-          console.error(`Tool "${name}" gagal:`, toolErr);
-          if (
-            (toolErr.message.includes("403") ||
-             toolErr.message.includes("401") ||
-             toolErr.message.includes("Resource not accessible")) &&
-            toolErr.message.includes("GitHub")
-          ) {
-            throw new Error(
-              "gagal akses karena masalah izin. coba cek token github kamu ya!",
-            );
-          }
-          result = { error: toolErr.message };
-        }
-        functionResponses.push({
-          functionResponse: {
-            name,
-            response: { content: result },
-          },
-        });
       }
+
+      const results = await Promise.all(functionCalls.map(call => {
+        const { name, args } = call.functionCall;
+        return (async () => {
+          const cacheKey = `${name}:${JSON.stringify(args)}`;
+          const cached = toolCache.get(cacheKey);
+          if (cached) return cached;
+
+          console.log(`Executing Tool: ${name}`, args);
+          try {
+            const result = await executeTool(name, args, env, chatId);
+            toolCache.set(cacheKey, result);
+            return result;
+          } catch (toolErr) {
+            console.error(`Tool "${name}" gagal:`, toolErr);
+            if (
+              (toolErr.message.includes("403") ||
+               toolErr.message.includes("401") ||
+               toolErr.message.includes("Resource not accessible")) &&
+              toolErr.message.includes("GitHub")
+            ) {
+              throw new Error(
+                "gagal akses karena masalah izin. coba cek token github kamu ya!",
+              );
+            }
+            return { error: toolErr.message };
+          }
+        })();
+      }));
+
+      const functionResponses = results.map((result, i) => ({
+        functionResponse: {
+          name: functionCalls[i].functionCall.name,
+          response: { content: result },
+        },
+      }));
 
       if (!escalationTriggered && isHeavyTask(iteration, functionCalls, userPrompt)) {
         const alreadyUsingGHA = functionCalls.some(tc => tc.functionCall?.name === 'triggerDeveloperWorkflow');
