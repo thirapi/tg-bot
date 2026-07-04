@@ -268,7 +268,7 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
         },
       }));
 
-      if (!escalationTriggered && isHeavyTask(iteration, functionCalls, userPrompt)) {
+      if (!escalationTriggered && !env.IS_SPACES && isHeavyTask(iteration, functionCalls, userPrompt)) {
         const alreadyUsingGHA = functionCalls.some(tc => tc.functionCall?.name === 'triggerDeveloperWorkflow');
         if (!alreadyUsingGHA) {
           if (!escalationHinted) {
