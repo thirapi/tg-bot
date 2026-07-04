@@ -48,6 +48,33 @@ export async function webSearch(query, env) {
     }
   }
 
+  if (lastErr) console.warn("SearXNG all failed, trying DuckDuckGo fallback:", lastErr.message);
+
+  try {
+    const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`;
+    const res = await fetch(ddgUrl, {
+      headers: { "User-Agent": "CocoaBot/1.0" },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const results = [];
+      if (data.AbstractText) {
+        results.push({ title: data.Headline || "Ringkasan", url: data.AbstractURL || "", snippet: data.AbstractText.slice(0, 400) });
+      }
+      for (const topic of (data.RelatedTopics || [])) {
+        if (topic.Text && topic.FirstURL && results.length < 8) {
+          results.push({ title: topic.Text.split(" - ")[0]?.slice(0, 80) || topic.Text.slice(0, 80), url: topic.FirstURL, snippet: topic.Text.slice(0, 400) });
+        }
+      }
+      if (results.length > 0) {
+        return JSON.stringify(results);
+      }
+    }
+  } catch (e) {
+    console.warn("DuckDuckGo fallback also failed:", e.message);
+  }
+
   throw lastErr || new Error("Semua search instance gagal.");
 }
 
