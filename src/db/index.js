@@ -93,6 +93,7 @@ export async function getMemory(env, chatId, key) {
 
 export async function getAllMemories(env, chatId) {
   if (env.__INJECTED_MEMORIES) return env.__INJECTED_MEMORIES;
+  if (!env.DB) return [];
   try {
     const { results } = await env.DB.prepare(
       `SELECT key, value FROM memories WHERE chat_id = ? ORDER BY updated_at DESC`
@@ -106,6 +107,7 @@ export async function getAllMemories(env, chatId) {
 
 export async function getRecentMemories(env, chatId, limit = 5) {
   if (env.__INJECTED_MEMORIES) return env.__INJECTED_MEMORIES.slice(0, limit);
+  if (!env.DB) return [];
   try {
     const { results } = await env.DB.prepare(
       `SELECT key, value FROM memories WHERE chat_id = ? ORDER BY updated_at DESC LIMIT ?`
@@ -152,6 +154,7 @@ export async function addTask(env, chatId, title, description, priority = "mediu
 
 export async function getTasks(env, chatId, status) {
   if (env.__INJECTED_TASKS) return env.__INJECTED_TASKS;
+  if (!env.DB) return [];
   try {
     let query = `SELECT * FROM tasks WHERE chat_id = ?`;
     const params = [chatId];
