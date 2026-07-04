@@ -2,27 +2,22 @@ async function searchBing(query) {
   const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&hl=en`;
   const res = await fetch(bingUrl, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`Bing returned HTTP ${res.status}`);
-  const html = await res.text();
-  const results = [];
-  const blockRegex = /<li class="b_algo">([\s\S]*?)<\/li>/g;
-  let match;
-  while ((match = blockRegex.exec(html)) !== null && results.length < 8) {
-    const block = match[1];
-    const titleMatch = block.match(/<h2>[\s\S]*?<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/);
-    const snippetMatch = block.match(/<p[^>]*class="[^"]*b_lineclamp[^"]*"[^>]*>([\s\S]*?)<\/p>/);
-    if (titleMatch) {
-      results.push({
-        title: titleMatch[2].replace(/<[^>]+>/g, '').trim().slice(0, 80),
-        url: titleMatch[1],
-        snippet: snippetMatch ? snippetMatch[1].replace(/<[^>]+>/g, '').trim().slice(0, 400) : '',
-      });
-    }
-  }
-  if (results.length === 0) throw new Error("Bing no results");
-  return JSON.stringify(results);
+  let html = await res.text();
+  html = html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, "")
+    .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, "")
+    .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&[a-z]+;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const MAX = 6000;
+  return html.slice(0, MAX) || "Tidak ada hasil.";
 }
 
 async function searchSearxng(query) {
@@ -52,16 +47,16 @@ async function searchSearxng(query) {
 }
 
 export async function webSearch(query, env) {
-  const searches = [searchBing, searchSearxng];
-  for (const searchFn of searches) {
+  const errors = [];
+  for (const searchFn of [searchBing, searchSearxng]) {
     try {
       const result = await searchFn(query);
       if (result) return result;
     } catch (e) {
-      console.warn(`Search "${searchFn.name}" failed:`, e.message);
+      errors.push(`${searchFn.name}: ${e.message}`);
     }
   }
-  throw new Error("Semua search backend gagal.");
+  throw new Error("Semua search backend gagal: " + errors.join("; "));
 }
 
 export async function webFetch(url) {
