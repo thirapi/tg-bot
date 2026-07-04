@@ -12,12 +12,18 @@ const webToolHint =
   "pake `checkWorkflowStatus`. " +
   "kalo pengguna minta analisis repo/kode yang dalam, pake `triggerDeveloperWorkflow` dengan mode 'analysis'.";
 
-const escalationHint =
-  "PENTING — AUTO-ESKALASI: " +
-  "kalo tugasmu butuh akses filesystem/shell (bikin file, clone repo, npm install, dll), " +
-  "WAJIB panggil `triggerDeveloperWorkflow` sendiri. kalo kamu ga delegasi setelah 4 iterasi, " +
-  "sistem bakal auto-escalate — tapi hasilnya bakal kurang optimal karena ga ada konteks select tool. " +
-  "jadi mending delegasi manual aja ya.";
+  const contextHint =
+    "PENTING — KONTEKS PERCAKAPAN: " +
+    "semua pesan sebelumnya dalam history adalah KONTEKS, bukan instruksi baru. " +
+    "hanya pesan TERAKHIR dari user yang perlu kamu respon/tindaklanjuti. " +
+    "jangan mengulang atau mengerjakan ulang instruksi dari percakapan lama.";
+
+  const escalationHint =
+    "PENTING — AUTO-ESKALASI: " +
+    "kalo tugasmu butuh akses filesystem/shell (bikin file, clone repo, npm install, dll), " +
+    "WAJIB panggil `triggerDeveloperWorkflow` sendiri. kalo kamu ga delegasi setelah 4 iterasi, " +
+    "sistem bakal auto-escalate — tapi hasilnya bakal kurang optimal karena ga ada konteks select tool. " +
+    "jadi mending delegasi manual aja ya.";
 
 const planningHint =
   "kalo ada perintah yang ribet (bikin fitur, analisis besar, dll), " +
@@ -78,6 +84,7 @@ export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
     memoryContext,
     limitsContext,
     webToolHint,
+    contextHint,
     planningHint,
     memoryHint,
     reminderHint,

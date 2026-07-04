@@ -138,12 +138,19 @@ async function buildSystemMessage(env, chatId) {
     "- DELEGASI WAJIB: kalo tugas butuh analisis multi-file, clone repo, atau bash — WAJIB pake `triggerDeveloperWorkflow`\n" +
     "- kalo tugasnya simple (baca 1 file github, bikin issue, cari info, dll) — kerjain sendiri pake tool yang ada";
 
+  const contextHint =
+    "PENTING — KONTEKS PERCAKAPAN: " +
+    "semua pesan sebelumnya dalam history adalah KONTEKS, bukan instruksi baru. " +
+    "hanya pesan TERAKHIR dari user yang perlu kamu respon/tindaklanjuti. " +
+    "jangan mengulang atau mengerjakan ulang instruksi dari percakapan lama.";
+
   const finalSystemInstruction = [
     systemPersona,
     systemInstruction,
     memoryContext,
     limitsContext,
     webToolHint,
+    contextHint,
     planningHint,
     memoryHint,
     reminderHint,
