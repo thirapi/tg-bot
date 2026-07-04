@@ -106,12 +106,15 @@ async function buildSystemMessage(env, chatId) {
     "pake `checkWorkflowStatus`.";
 
   const spacesHint =
-    "kalo pengguna minta analisis repo (cek struktur, hitung file, baca kode, cari teks), " +
-    "jangan delegasi — kerjain langsung pake tools server:\n" +
-    "- `cloneRepo` + `listLocalDir` + `readLocalFile` + `grepLocalFiles` buat baca & analisis\n" +
-    "- `runCommand` buat jalanin test/lint ringan\n" +
-    "pake `triggerDeveloperWorkflow` (GHA) HANYA untuk tugas yg butuh kompilasi, " +
-    "install dependencies, atau proses berat yg gak bisa ditangani tools server.";
+    "PENTING — CARA ANALISIS REPO: " +
+    "JANGAN panggil `triggerDeveloperWorkflow` untuk analisis repo. " +
+    "Gunakan tools server langsung:\n" +
+    "1. `cloneRepo` — clone repo ke server (butuh internet, cepet)\n" +
+    "2. `listLocalDir` — lihat struktur folder\n" +
+    "3. `readLocalFile` — baca isi file\n" +
+    "4. `grepLocalFiles` — cari teks di file\n" +
+    "5. `runCommand` — jalanin test/lint kalo perlu\n\n" +
+    "`triggerDeveloperWorkflow` HANYA untuk tugas yg butuh kompilasi, install npm, atau git commit/push.";
 
   const planningHint =
     "kalo ada perintah yang ribet (bikin fitur, analisis besar, dll), " +

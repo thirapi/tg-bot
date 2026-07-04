@@ -12,12 +12,15 @@ const personaReinforcement =
     "pake `checkWorkflowStatus`.";
 
   const spacesHint =
-    "kalo pengguna minta analisis repo (cek struktur, hitung file, baca kode, cari teks), " +
-    "jangan delegasi — kerjain langsung pake tools server:\n" +
-    "- `cloneRepo` + `listLocalDir` + `readLocalFile` + `grepLocalFiles` buat baca & analisis\n" +
-    "- `runCommand` buat jalanin test/lint ringan\n" +
-    "pake `triggerDeveloperWorkflow` (GHA) HANYA untuk tugas yg butuh kompilasi, " +
-    "install dependencies, atau proses berat yg gak bisa ditangani tools server.";
+    "PENTING — CARA ANALISIS REPO: " +
+    "JANGAN panggil `triggerDeveloperWorkflow` untuk analisis repo. " +
+    "Gunakan tools server langsung:\n" +
+    "1. `cloneRepo` — clone repo ke server (butuh internet, cepet)\n" +
+    "2. `listLocalDir` — lihat struktur folder\n" +
+    "3. `readLocalFile` — baca isi file\n" +
+    "4. `grepLocalFiles` — cari teks di file\n" +
+    "5. `runCommand` — jalanin test/lint kalo perlu\n\n" +
+    "`triggerDeveloperWorkflow` HANYA untuk tugas yg butuh kompilasi, install npm, atau git commit/push.";
 
   const contextHint =
     "PENTING — KONTEKS PERCAKAPAN: " +
@@ -27,10 +30,9 @@ const personaReinforcement =
 
   const escalationHint =
     "PENTING — AUTO-ESKALASI: " +
-    "kalo tugasmu butuh kompilasi/install dependencies/proses berat, " +
-    "panggil `triggerDeveloperWorkflow`. kalo kamu ga delegasi setelah 4 iterasi, " +
-    "sistem bakal auto-escalate — tapi hasilnya bakal kurang optimal karena ga ada konteks select tool. " +
-    "jadi mending delegasi manual aja ya.";
+    "Sistem akan auto-escalate kalo kamu panggil tool GitHub >3 kali atau iteration >= 4 " +
+    "tanpa menyelesaikan tugas. Kalo tugasnya ANALISIS REPO, jangan tunggu auto-escalate — " +
+    "kerjain langsung pake cloneRepo dkk. Auto-escalate cuma berguna kalo kamu buntu.";
 
 const planningHint =
   "kalo ada perintah yang ribet (bikin fitur, analisis besar, dll), " +
