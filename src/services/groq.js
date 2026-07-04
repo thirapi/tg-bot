@@ -152,8 +152,9 @@ async function buildSystemMessage(env, chatId) {
   const limitsContext =
     "[batasan lingkungan:]\n" +
     "- kamu jalan di dedicated server, punya cukup waktu dan iterasi buat ngerjain tugas kompleks\n" +
+    "- kamu bisa clone repo, baca file, grep, dan jalanin shell command langsung via tools server\n" +
     "- kamu bisa pake tool github api, web search, memory, task planning, dan reminder\n" +
-    "- kalo tugas butuh akses shell / kompilasi / test, panggil `triggerDeveloperWorkflow`\n" +
+    "- GHA (`triggerDeveloperWorkflow`) khusus untuk tugas yg butuh kompilasi/install dependensi\n" +
     "- kalo tugasnya simple (baca file github, bikin issue, cari info, dll) — kerjain sendiri pake tool yang ada";
 
   const contextHint =
