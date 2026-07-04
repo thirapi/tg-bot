@@ -1,87 +1,67 @@
-const SEARXNG_DEFAULT = "https://searx.be";
-const SEARXNG_FALLBACKS = [
-  "https://searx.namejeff.xyz",
-  "https://sx.andrewyu.org",
-  "https://search.us.projectsegfau.lt",
-];
+async function searchBing(query) {
+  const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&hl=en`;
+  const res = await fetch(bingUrl, {
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`Bing returned HTTP ${res.status}`);
+  const html = await res.text();
+  const results = [];
+  const blockRegex = /<li class="b_algo">([\s\S]*?)<\/li>/g;
+  let match;
+  while ((match = blockRegex.exec(html)) !== null && results.length < 8) {
+    const block = match[1];
+    const titleMatch = block.match(/<h2>[\s\S]*?<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/);
+    const snippetMatch = block.match(/<p[^>]*class="[^"]*b_lineclamp[^"]*"[^>]*>([\s\S]*?)<\/p>/);
+    if (titleMatch) {
+      results.push({
+        title: titleMatch[2].replace(/<[^>]+>/g, '').trim().slice(0, 80),
+        url: titleMatch[1],
+        snippet: snippetMatch ? snippetMatch[1].replace(/<[^>]+>/g, '').trim().slice(0, 400) : '',
+      });
+    }
+  }
+  if (results.length === 0) throw new Error("Bing no results");
+  return JSON.stringify(results);
+}
 
-export async function webSearch(query, env) {
-  const customInstance = env?.SEARXNG_INSTANCE || (typeof process !== 'undefined' && process.env?.SEARXNG_INSTANCE);
+async function searchSearxng(query) {
+  const customInstance = (typeof process !== 'undefined' && process.env?.SEARXNG_INSTANCE) ? process.env.SEARXNG_INSTANCE : null;
   const instances = [
     ...(customInstance ? [customInstance] : []),
-    SEARXNG_DEFAULT,
-    ...SEARXNG_FALLBACKS,
+    "https://searx.be",
+    "https://searx.namejeff.xyz",
+    "https://sx.andrewyu.org",
   ];
-
-  let lastErr = null;
   for (const instance of instances) {
     try {
       const url = `${instance}/search?q=${encodeURIComponent(query)}&format=json&language=id&categories=general`;
       const res = await fetch(url, {
         headers: { "User-Agent": "TelegramBot/1.0 (Cocoa)" },
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(5000),
       });
-
       if (res.status === 429) continue;
-
-      if (!res.ok) {
-        lastErr = new Error(`Search API returned HTTP ${res.status}`);
-        continue;
-      }
-
+      if (!res.ok) continue;
       const data = await res.json();
       const results = (data.results || []).slice(0, 8);
+      if (results.length === 0) continue;
+      return JSON.stringify(results.map(r => ({ title: r.title, url: r.url, snippet: (r.content || "").slice(0, 400) })));
+    } catch (_) {}
+  }
+  throw new Error("SearXNG all failed");
+}
 
-      if (results.length === 0) {
-        return "Tidak ada hasil penelusuran untuk query tersebut.";
-      }
-
-      return JSON.stringify(
-        results.map((r) => ({
-          title: r.title,
-          url: r.url,
-          snippet: (r.content || "").slice(0, 400),
-        })),
-      );
+export async function webSearch(query, env) {
+  const searches = [searchBing, searchSearxng];
+  for (const searchFn of searches) {
+    try {
+      const result = await searchFn(query);
+      if (result) return result;
     } catch (e) {
-      lastErr = e;
+      console.warn(`Search "${searchFn.name}" failed:`, e.message);
     }
   }
-
-  if (lastErr) console.warn("SearXNG all failed, trying Bing fallback:", lastErr.message);
-
-  try {
-    const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query + " 2026")}&hl=en`;
-    const res = await fetch(bingUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (res.ok) {
-      const html = await res.text();
-      const results = [];
-      const blockRegex = /<li class="b_algo">([\s\S]*?)<\/li>/g;
-      let match;
-      while ((match = blockRegex.exec(html)) !== null && results.length < 8) {
-        const block = match[1];
-        const titleMatch = block.match(/<h2>[\s\S]*?<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/);
-        const snippetMatch = block.match(/<p[^>]*class="[^"]*b_lineclamp[^"]*"[^>]*>([\s\S]*?)<\/p>/);
-        if (titleMatch) {
-          results.push({
-            title: titleMatch[2].replace(/<[^>]+>/g, '').trim().slice(0, 80),
-            url: titleMatch[1],
-            snippet: snippetMatch ? snippetMatch[1].replace(/<[^>]+>/g, '').trim().slice(0, 400) : '',
-          });
-        }
-      }
-      if (results.length > 0) {
-        return JSON.stringify(results);
-      }
-    }
-  } catch (e) {
-    console.warn("Bing fallback also failed:", e.message);
-  }
-
-  throw lastErr || new Error("Semua search instance gagal.");
+  throw new Error("Semua search backend gagal.");
 }
 
 export async function webFetch(url) {
