@@ -1,0 +1,13 @@
+node_modules/
+.wrangler/
+dist/
+build/
+.env
+.env.local
+.dev.vars
+*.log
+.git
+.gitignore
+README.md
+.DS_Store
+target_workspace/
