@@ -33,6 +33,14 @@ const reminderHint =
 
 export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+
+  const sanitizedContents = contents.map(c => {
+    if (c.role === "function") {
+      return { ...c, role: "user" };
+    }
+    return c;
+  });
+
   const wibTime = new Date().toLocaleString("id-ID", {
     timeZone: "Asia/Jakarta",
     weekday: "long",
@@ -81,7 +89,7 @@ export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
     .filter(Boolean)
     .join("\n\n");
   const payload = {
-    contents,
+    contents: sanitizedContents,
     systemInstruction: { parts: [{ text: finalSystemInstruction }] },
     tools: githubTools,
     generationConfig: {
