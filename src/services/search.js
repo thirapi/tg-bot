@@ -48,23 +48,29 @@ export async function webSearch(query, env) {
     }
   }
 
-  if (lastErr) console.warn("SearXNG all failed, trying DuckDuckGo fallback:", lastErr.message);
+  if (lastErr) console.warn("SearXNG all failed, trying Bing fallback:", lastErr.message);
 
   try {
-    const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`;
-    const res = await fetch(ddgUrl, {
-      headers: { "User-Agent": "CocoaBot/1.0" },
+    const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query + " 2026")}&hl=en`;
+    const res = await fetch(bingUrl, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
       signal: AbortSignal.timeout(10000),
     });
     if (res.ok) {
-      const data = await res.json();
+      const html = await res.text();
       const results = [];
-      if (data.AbstractText) {
-        results.push({ title: data.Headline || "Ringkasan", url: data.AbstractURL || "", snippet: data.AbstractText.slice(0, 400) });
-      }
-      for (const topic of (data.RelatedTopics || [])) {
-        if (topic.Text && topic.FirstURL && results.length < 8) {
-          results.push({ title: topic.Text.split(" - ")[0]?.slice(0, 80) || topic.Text.slice(0, 80), url: topic.FirstURL, snippet: topic.Text.slice(0, 400) });
+      const blockRegex = /<li class="b_algo">([\s\S]*?)<\/li>/g;
+      let match;
+      while ((match = blockRegex.exec(html)) !== null && results.length < 8) {
+        const block = match[1];
+        const titleMatch = block.match(/<h2>[\s\S]*?<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/);
+        const snippetMatch = block.match(/<p[^>]*class="[^"]*b_lineclamp[^"]*"[^>]*>([\s\S]*?)<\/p>/);
+        if (titleMatch) {
+          results.push({
+            title: titleMatch[2].replace(/<[^>]+>/g, '').trim().slice(0, 80),
+            url: titleMatch[1],
+            snippet: snippetMatch ? snippetMatch[1].replace(/<[^>]+>/g, '').trim().slice(0, 400) : '',
+          });
         }
       }
       if (results.length > 0) {
@@ -72,7 +78,7 @@ export async function webSearch(query, env) {
       }
     }
   } catch (e) {
-    console.warn("DuckDuckGo fallback also failed:", e.message);
+    console.warn("Bing fallback also failed:", e.message);
   }
 
   throw lastErr || new Error("Semua search instance gagal.");
