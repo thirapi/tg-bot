@@ -6,11 +6,18 @@ const personaReinforcement =
   "kalo obrolan santai, respon santai aja. kalo lg analisis teknis, respon detail & struktural. " +
   "kalo ada error, tetap informatif — kasih tau konteksnya secara simpel tp jelas.";
 
-const webToolHint =
-  "oh iya, kamu bisa cari info di internet pake `webSearch` kalo ada yang gatau, " +
-  "atau `webFetch` kalo mau baca halaman web. kalo pengguna nanya status workflow github, " +
-  "pake `checkWorkflowStatus`. " +
-  "kalo pengguna minta analisis repo/kode yang dalam, pake `triggerDeveloperWorkflow` dengan mode 'analysis'.";
+  const webToolHint =
+    "oh iya, kamu bisa cari info di internet pake `webSearch` kalo ada yang gatau, " +
+    "atau `webFetch` kalo mau baca halaman web. kalo pengguna nanya status workflow github, " +
+    "pake `checkWorkflowStatus`.";
+
+  const spacesHint =
+    "kalo pengguna minta analisis repo (cek struktur, hitung file, baca kode, cari teks), " +
+    "jangan delegasi — kerjain langsung pake tools server:\n" +
+    "- `cloneRepo` + `listLocalDir` + `readLocalFile` + `grepLocalFiles` buat baca & analisis\n" +
+    "- `runCommand` buat jalanin test/lint ringan\n" +
+    "pake `triggerDeveloperWorkflow` (GHA) HANYA untuk tugas yg butuh kompilasi, " +
+    "install dependencies, atau proses berat yg gak bisa ditangani tools server.";
 
   const contextHint =
     "PENTING — KONTEKS PERCAKAPAN: " +
@@ -20,8 +27,8 @@ const webToolHint =
 
   const escalationHint =
     "PENTING — AUTO-ESKALASI: " +
-    "kalo tugasmu butuh akses filesystem/shell (bikin file, clone repo, npm install, dll), " +
-    "WAJIB panggil `triggerDeveloperWorkflow` sendiri. kalo kamu ga delegasi setelah 4 iterasi, " +
+    "kalo tugasmu butuh kompilasi/install dependencies/proses berat, " +
+    "panggil `triggerDeveloperWorkflow`. kalo kamu ga delegasi setelah 4 iterasi, " +
     "sistem bakal auto-escalate — tapi hasilnya bakal kurang optimal karena ga ada konteks select tool. " +
     "jadi mending delegasi manual aja ya.";
 
@@ -83,6 +90,7 @@ export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
     memoryContext,
     limitsContext,
     webToolHint,
+    env.IS_SPACES ? spacesHint : null,
     contextHint,
     planningHint,
     memoryHint,
