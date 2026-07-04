@@ -165,7 +165,7 @@ export async function executeTool(name, args, env, chatId) {
       };
     }
     case "webSearch": {
-      return await webSearch(args.query);
+      return await webSearch(args.query, env);
     }
     case "webFetch": {
       return await webFetch(args.url);

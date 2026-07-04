@@ -237,9 +237,10 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
         } catch (toolErr) {
           console.error(`Tool "${name}" gagal:`, toolErr);
           if (
-            toolErr.message.includes("403") ||
-            toolErr.message.includes("401") ||
-            toolErr.message.includes("Resource not accessible")
+            (toolErr.message.includes("403") ||
+             toolErr.message.includes("401") ||
+             toolErr.message.includes("Resource not accessible")) &&
+            toolErr.message.includes("GitHub")
           ) {
             throw new Error(
               "gagal akses karena masalah izin. coba cek token github kamu ya!",

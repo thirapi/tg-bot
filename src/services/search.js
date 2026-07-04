@@ -1,31 +1,54 @@
-const SEARXNG_INSTANCE = "https://searx.be";
+const SEARXNG_DEFAULT = "https://searx.be";
+const SEARXNG_FALLBACKS = [
+  "https://searx.namejeff.xyz",
+  "https://sx.andrewyu.org",
+  "https://search.us.projectsegfau.lt",
+];
 
-export async function webSearch(query) {
-  const url = `${SEARXNG_INSTANCE}/search?q=${encodeURIComponent(query)}&format=json&language=id&categories=general`;
+export async function webSearch(query, env) {
+  const customInstance = env?.SEARXNG_INSTANCE || (typeof process !== 'undefined' && process.env?.SEARXNG_INSTANCE);
+  const instances = [
+    ...(customInstance ? [customInstance] : []),
+    SEARXNG_DEFAULT,
+    ...SEARXNG_FALLBACKS,
+  ];
 
-  const res = await fetch(url, {
-    headers: { "User-Agent": "TelegramBot/1.0 (Cocoa)" },
-    signal: AbortSignal.timeout(10000),
-  });
+  let lastErr = null;
+  for (const instance of instances) {
+    try {
+      const url = `${instance}/search?q=${encodeURIComponent(query)}&format=json&language=id&categories=general`;
+      const res = await fetch(url, {
+        headers: { "User-Agent": "TelegramBot/1.0 (Cocoa)" },
+        signal: AbortSignal.timeout(8000),
+      });
 
-  if (!res.ok) {
-    throw new Error(`Search API returned HTTP ${res.status}`);
+      if (res.status === 429) continue;
+
+      if (!res.ok) {
+        lastErr = new Error(`Search API returned HTTP ${res.status}`);
+        continue;
+      }
+
+      const data = await res.json();
+      const results = (data.results || []).slice(0, 8);
+
+      if (results.length === 0) {
+        return "Tidak ada hasil penelusuran untuk query tersebut.";
+      }
+
+      return JSON.stringify(
+        results.map((r) => ({
+          title: r.title,
+          url: r.url,
+          snippet: (r.content || "").slice(0, 400),
+        })),
+      );
+    } catch (e) {
+      lastErr = e;
+    }
   }
 
-  const data = await res.json();
-  const results = (data.results || []).slice(0, 8);
-
-  if (results.length === 0) {
-    return "Tidak ada hasil penelusuran untuk query tersebut.";
-  }
-
-  return JSON.stringify(
-    results.map((r) => ({
-      title: r.title,
-      url: r.url,
-      snippet: (r.content || "").slice(0, 400),
-    })),
-  );
+  throw lastErr || new Error("Semua search instance gagal.");
 }
 
 export async function webFetch(url) {
