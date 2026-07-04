@@ -92,7 +92,8 @@ const server = createServer(async (req, res) => {
       const startTime = Date.now();
       const result = await runAgentLoop(
         currentContents, proxyEnv, chatId, userPrompt || '',
-        providerConfigs, [], startTime
+        providerConfigs, [], startTime,
+        { executionTimeout: 240000, iterationTimeout: 30000 }
       );
 
       const newContents = currentContents;

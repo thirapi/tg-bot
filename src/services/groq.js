@@ -132,11 +132,10 @@ async function buildSystemMessage(env, chatId) {
 
   const limitsContext =
     "[batasan lingkungan:]\n" +
-    "- kamu jalan di cloudflare worker (gratis), maksimal 30 detik per tugas, dan cuma bisa ~5 kali panggil tool tiap chat\n" +
-    "- kamu bisa pake tool github api, web search, dan akses memori — ini cepat dan aman\n" +
-    "- kamu TIDAK bisa: jalanin perintah shell/npm/git, cloning repo, bikin file di server, atau proses berat\n" +
-    "- DELEGASI WAJIB: kalo tugas butuh analisis multi-file, clone repo, atau bash — WAJIB pake `triggerDeveloperWorkflow`\n" +
-    "- kalo tugasnya simple (baca 1 file github, bikin issue, cari info, dll) — kerjain sendiri pake tool yang ada";
+    "- kamu jalan di dedicated server, punya cukup waktu dan iterasi buat ngerjain tugas kompleks\n" +
+    "- kamu bisa pake tool github api, web search, memory, task planning, dan reminder\n" +
+    "- kalo tugas butuh akses shell / kompilasi / test, panggil `triggerDeveloperWorkflow`\n" +
+    "- kalo tugasnya simple (baca file github, bikin issue, cari info, dll) — kerjain sendiri pake tool yang ada";
 
   const contextHint =
     "PENTING — KONTEKS PERCAKAPAN: " +
@@ -302,11 +301,11 @@ export async function fetchGroqGenerate(model, key, contents, env, chatId) {
     tools: tools.length > 0 ? tools : undefined,
     tool_choice: "auto",
     temperature: 0.65,
-    max_tokens: 4096,
+    max_tokens: 16384,
   };
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
 
   try {
     const response = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
@@ -342,7 +341,7 @@ export async function fetchGroqGenerate(model, key, contents, env, chatId) {
   } catch (err) {
     clearTimeout(timeoutId);
     if (err.name === "AbortError") {
-      throw new Error("GROQ_TIMEOUT: Request Timeout (8s)");
+      throw new Error("GROQ_TIMEOUT: Request Timeout");
     }
     throw err;
   }

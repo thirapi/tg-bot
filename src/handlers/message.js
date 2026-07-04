@@ -1,4 +1,4 @@
-import { MAX_HISTORY, MAX_AGENT_ITERATIONS } from "../config.js";
+import { MAX_HISTORY, MAX_AGENT_ITERATIONS, EXECUTION_TIMEOUT, AGENT_ITERATION_TIMEOUT } from "../config.js";
 import { fetchGeminiGenerate } from "../services/gemini.js";
 import { fetchGroqGenerate } from "../services/groq.js";
 import { prepareMediaPart } from "../services/media.js";
@@ -52,8 +52,9 @@ export function buildProviderConfigs(env) {
   return configs;
 }
 
-export async function runAgentLoop(currentContents, env, chatId, userPrompt, providerConfigs, history, startTime) {
-  const EXECUTION_TIMEOUT = 23000;
+export async function runAgentLoop(currentContents, env, chatId, userPrompt, providerConfigs, history, startTime, options = {}) {
+  const maxTime = options.executionTimeout || EXECUTION_TIMEOUT;
+  const iterTimeout = options.iterationTimeout || AGENT_ITERATION_TIMEOUT;
   let iteration = 0;
   let finalText = null;
   const failedProviders = new Set();
@@ -66,7 +67,7 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
   while (iteration < MAX_AGENT_ITERATIONS) {
     iteration++;
 
-    if (Date.now() - startTime > EXECUTION_TIMEOUT) {
+    if (Date.now() - startTime > maxTime) {
       throw new Error(
         "duh, sori ya prosesnya kelamaan nih, keburu kehabisan batas waktu. coba pecah pertanyaannya biar lebih simpel aja ya!",
       );
@@ -78,7 +79,7 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
 
     for (const provider of providerConfigs) {
       if (failedProviders.has(provider.name)) continue;
-      if (Date.now() - startTime > EXECUTION_TIMEOUT) break;
+      if (Date.now() - startTime > maxTime) break;
 
       const { name, keys, models, callAI } = provider;
       const blacklistedModels = new Set();
@@ -101,7 +102,7 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
       if (activeModels.length === 0) continue;
 
       outerLoop: for (const model of activeModels) {
-        if (Date.now() - startTime > EXECUTION_TIMEOUT) break outerLoop;
+        if (Date.now() - startTime > maxTime) break outerLoop;
 
         const availableKeys = [];
         for (const key of keys) {
@@ -121,13 +122,13 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
         const MAX_FAILURES_BEFORE_SKIP = 2;
 
         for (const key of shuffledKeys) {
-          if (Date.now() - startTime > EXECUTION_TIMEOUT) break outerLoop;
+          if (Date.now() - startTime > maxTime) break outerLoop;
 
           const keyShort = key.slice(-6);
           try {
             const fetchPromise = callAI(model, key, currentContents, env, chatId);
             const timeoutPromise = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error("TIMEOUT_TRIGGER: Request Timeout (5s)")), 5000)
+              setTimeout(() => reject(new Error("TIMEOUT_TRIGGER: Request Timeout")), iterTimeout)
             );
 
             response = await Promise.race([fetchPromise, timeoutPromise]);
