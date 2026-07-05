@@ -21,9 +21,9 @@ try {
 
 const PORT = parseInt(process.env.PORT || '7860', 10);
 
-// Persists __WORKSPACE (active cloned repo path) across HTTP requests per chatId.
-// Lives as long as the Node.js process runs — no disk I/O needed.
 const workspaceStore = new Map();
+// Track ongoing chat processes to avoid duplicate execution on the same workspace
+const activeChats = new Set();
 
 function parseBody(req) {
   return new Promise((resolve, reject) => {
@@ -89,8 +89,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-// Track ongoing chat processes to avoid duplicate execution on the same workspace
-const activeChats = new Set();
+
 
   if (url.pathname === '/api/process' && req.method === 'POST') {
     try {
@@ -189,7 +188,9 @@ const activeChats = new Set();
           isAgentRunning = false; // Stop typing indicator before sending final message
 
           // Delegate Telegram delivery and history saving to Cloudflare Worker callback
-          const newContent = currentContents.slice(rawContents?.length || 0);
+          // Strip self-reflection prompts (internal) from history before persisting
+          const newContent = currentContents.slice(rawContents?.length || 0)
+            .filter(c => !c._selfReflection);
           let finalText = null;
           if (!result.escalationTriggered) {
             finalText = result.finalText || "tugasnya udah aku jalanin ya! tp aku ga dapet respons teks penutup dr sistem. coba cek repo kamu deh, harusnya kodenya udh ke-update";

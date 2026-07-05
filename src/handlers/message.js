@@ -65,9 +65,16 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
   const toolCache = new Map();
   let selfReflectionRun = false;
   let filesModified = false;
+  const isSpaces = !!env.IS_SPACES;
 
+  // Throttle progress updates to avoid Telegram editMessageText rate limits
+  let lastProgressTime = 0;
+  const PROGRESS_THROTTLE_MS = 5000;
   async function sendProgress(text) {
-    if (!env.WORKER_URL) return;
+    if (!env.WORKER_URL || !isSpaces) return;
+    const now = Date.now();
+    if (now - lastProgressTime < PROGRESS_THROTTLE_MS) return;
+    lastProgressTime = now;
     try {
       await fetch(`${env.WORKER_URL}/api/spaces-callback`, {
         method: 'POST',
@@ -381,12 +388,14 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
     const dynamicTextPart = parts.map(p => p.text).filter(Boolean).join("\n");
 
     if (dynamicTextPart) {
-      if (filesModified && !selfReflectionRun) {
+      // Self-reflection only on Spaces path (Worker has tight 23s timeout)
+      if (isSpaces && filesModified && !selfReflectionRun) {
         selfReflectionRun = true;
         await sendProgress("Memeriksa ulang hasil pekerjaan (Self-Reflection)...");
         currentContents.push({
           role: "user",
-          parts: [{ text: "Tolong periksa kembali pekerjaanmu (Self-Reflection). Apakah semua kode baru sudah bebas dari error sintaks, import yang kurang, atau bug logika? Jalankan perintah tsc/build/test jika perlu untuk memverifikasi. Jika ada yang kurang atau salah, perbaiki sekarang dengan tool. Jika sudah sempurna, berikan jawaban penutup." }]
+          parts: [{ text: "Tolong periksa kembali pekerjaanmu (Self-Reflection). Apakah semua kode baru sudah bebas dari error sintaks, import yang kurang, atau bug logika? Jalankan perintah tsc/build/test jika perlu untuk memverifikasi. Jika ada yang kurang atau salah, perbaiki sekarang dengan tool. Jika sudah sempurna, berikan jawaban penutup." }],
+          _selfReflection: true
         });
         continue;
       }
