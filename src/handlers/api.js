@@ -237,9 +237,15 @@ export async function handleAPI(request, env, ctx) {
         }
 
         const lockKey = `lock:${chatId}`;
-        await env.CHAT_HISTORY.delete(lockKey).catch(e => 
-          console.error("Failed to release lock on callback:", e)
-        );
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            await env.CHAT_HISTORY.delete(lockKey);
+            break;
+          } catch (e) {
+            console.error(`Lock delete attempt ${attempt + 1} on callback failed:`, e);
+            if (attempt < 2) await new Promise(r => setTimeout(r, 500));
+          }
+        }
       }
 
       // Save history to D1 if new contents are present

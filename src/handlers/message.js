@@ -631,9 +631,15 @@ export async function processMessage(message, env) {
     clearTimeout(typingTimer);
     if (shouldReleaseLock) {
       console.log(`Releasing lock for chat: ${chatId}`);
-      await env.CHAT_HISTORY.delete(lockKey).catch((e) => {
-        console.error(`Gagal menghapus lockKey ${lockKey}:`, e);
-      });
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await env.CHAT_HISTORY.delete(lockKey);
+          break;
+        } catch (e) {
+          console.error(`Lock delete attempt ${attempt + 1} failed:`, e);
+          if (attempt < 2) await new Promise(r => setTimeout(r, 500));
+        }
+      }
     }
   }
 }
