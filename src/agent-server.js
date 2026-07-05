@@ -127,7 +127,7 @@ const server = createServer(async (req, res) => {
   if (url.pathname === '/api/process' && req.method === 'POST') {
     try {
       const body = await parseBody(req);
-      const { chatId, userPrompt, currentContents: rawContents, memories, tasks, workerUrl } = body;
+      const { chatId, userPrompt, currentContents: rawContents, memories, tasks, workerUrl, progressMsgId } = body;
 
       if (!chatId) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -208,9 +208,26 @@ const server = createServer(async (req, res) => {
             newContent,
             escalationTriggered: result.escalationTriggered,
             error: null,
+            progressMsgId: progressMsgId || null,
             ts: Date.now()
           });
           console.log(`[Spaces] Result stored for chat ${stringChatId}`);
+
+          // Fast-path: coba HTTPS callback (port 443 mungkin tidak diblokir untuk IP Worker-mu)
+          if (workerUrl) {
+            const callbackUrl = `${workerUrl}/api/spaces-callback`;
+            fetch(callbackUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer kokoa-runner-secret' },
+              body: JSON.stringify({ chatId: stringChatId, newContents: newContent, finalText, isFinal: true, maxHistory: 15, progressMsgId }),
+              signal: AbortSignal.timeout(5000),
+            }).then(r => {
+              if (r.ok) {
+                console.log(`[Spaces] HTTPS callback success for chat ${stringChatId}`);
+                resultsStore.delete(stringChatId);
+              }
+            }).catch(e => console.log(`[Spaces] HTTPS callback failed (cron fallback): ${e.message}`));
+          }
 
         } catch (err) {
           console.error('[Spaces] Async agent loop error:', err);
@@ -221,9 +238,22 @@ const server = createServer(async (req, res) => {
             newContent: [],
             escalationTriggered: false,
             error: errorMsg,
+            progressMsgId: progressMsgId || null,
             ts: Date.now()
           });
           console.log(`[Spaces] Error result stored for chat ${stringChatId}`);
+
+          if (workerUrl) {
+            const callbackUrl = `${workerUrl}/api/spaces-callback`;
+            fetch(callbackUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer kokoa-runner-secret' },
+              body: JSON.stringify({ chatId: stringChatId, error: `yah eror pas jalanin di server: ${errorMsg}. coba kirim lagi ya!`, isFinal: true, progressMsgId }),
+              signal: AbortSignal.timeout(5000),
+            }).then(r => {
+              if (r.ok) resultsStore.delete(stringChatId);
+            }).catch(e => console.log(`[Spaces] Error HTTPS callback failed: ${e.message}`));
+          }
 
         } finally {
           activeChats.delete(stringChatId);

@@ -542,21 +542,40 @@ export async function processMessage(message, env) {
 
     if (env.HF_SPACES_URL) {
       try {
+        const { sendTelegramMessage } = await import("../services/telegram.js");
+        const sent = await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Cocoa sedang bekerja... ⏳");
+        const progressMsgId = sent && sent.length > 0 && sent[0].message_id ? String(sent[0].message_id) : null;
+        if (progressMsgId) {
+          await env.CHAT_HISTORY.put(`progress_msg:${chatId}`, progressMsgId, { expirationTtl: 600 });
+        }
+
         const { processViaSpaces } = await import("../services/hf-spaces.js");
-        const res = await processViaSpaces(env, chatId, userPrompt, mediaData, history);
-        if (res && (res.status === "processing" || res.status === "busy")) {
-          if (res.status === "processing") {
-            const sent = await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Cocoa sedang bekerja... ⏳");
-            if (sent && sent.length > 0 && sent[0].message_id) {
-              await env.CHAT_HISTORY.put(`progress_msg:${chatId}`, String(sent[0].message_id), { expirationTtl: 600 });
-            }
-          }
+        const res = await processViaSpaces(env, chatId, userPrompt, mediaData, history, progressMsgId);
+        if (res && res.status === "processing") {
+          shouldReleaseLock = false;
+          return;
+        }
+
+        // Busy atau sync — hapus progress message
+        if (progressMsgId) {
+          const { deleteTelegramMessage } = await import("../services/telegram.js");
+          await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(progressMsgId)).catch(() => {});
+          await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
+        }
+        if (res && res.status === "busy") {
           shouldReleaseLock = false;
           return;
         }
         return;
       } catch (e) {
         console.error("Spaces unreachable, falling back to direct processing:", e.message);
+        // Hapus progress message karena Spaces gagal
+        const pid = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
+        if (pid) {
+          const { deleteTelegramMessage } = await import("../services/telegram.js");
+          await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(pid)).catch(() => {});
+          await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
+        }
       }
     }
 

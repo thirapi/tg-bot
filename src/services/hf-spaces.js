@@ -3,7 +3,7 @@ import { sendTelegramMessage } from "./telegram.js";
 import { markdownToRichHtml } from "../utils/formatter.js";
 import { MAX_HISTORY } from "../config.js";
 
-export async function processViaSpaces(env, chatId, userPrompt, mediaData, history) {
+export async function processViaSpaces(env, chatId, userPrompt, mediaData, history, progressMsgId) {
   const maxHistory = MAX_HISTORY;
   const memories = await getAllMemories(env, chatId);
   const tasks = await getTasks(env, chatId);
@@ -23,6 +23,7 @@ export async function processViaSpaces(env, chatId, userPrompt, mediaData, histo
       memories,
       tasks,
       workerUrl: env.WORKER_URL || "",
+      progressMsgId: progressMsgId || null,
     }),
   });
 

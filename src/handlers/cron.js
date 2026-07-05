@@ -30,7 +30,10 @@ async function pollSpacesResults(env, ctx) {
             "server Spaces aku restart atau kereset sebelum sempat selesai. coba kirim lagi ya!",
           );
           const errProgressKey = `progress_msg:${chatId}`;
-          const errProgressId = await env.CHAT_HISTORY.get(errProgressKey);
+          let errProgressId = data.progressMsgId;
+          if (!errProgressId) {
+            errProgressId = await env.CHAT_HISTORY.get(errProgressKey);
+          }
           if (errProgressId) {
             const { deleteTelegramMessage } = await import("../services/telegram.js");
             await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(errProgressId)).catch(() => {});
@@ -89,13 +92,15 @@ async function pollSpacesResults(env, ctx) {
         // Clean up
         await env.CHAT_HISTORY.delete(keyMeta.name);
 
-        // Delete progress message
-        const progressKey = `progress_msg:${chatId}`;
-        const progressMsgId = await env.CHAT_HISTORY.get(progressKey);
+        // Delete progress message — priority dari result body (direct pass, no KV)
+        let progressMsgId = data.progressMsgId;
+        if (!progressMsgId) {
+          progressMsgId = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
+        }
         if (progressMsgId) {
           const { deleteTelegramMessage } = await import("../services/telegram.js");
           await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(progressMsgId)).catch(() => {});
-          await env.CHAT_HISTORY.delete(progressKey).catch(() => {});
+          await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
         }
 
         // Release lock

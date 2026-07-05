@@ -227,12 +227,14 @@ export async function handleAPI(request, env, ctx) {
 
       // Handle final cleanup (delete progress loading message & release lock)
       if (isFinal) {
-        // KV retry untuk eventual consistency (progressMsgId ditulis ~30s sebelum callback)
-        let progressMsgId = null;
-        for (let i = 0; i < 5; i++) {
-          progressMsgId = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
-          if (progressMsgId) break;
-          await new Promise(r => setTimeout(r, 300));
+        // progressMsgId dari body callback (direct pass, no KV)
+        let progressMsgId = body.progressMsgId;
+        if (!progressMsgId) {
+          for (let i = 0; i < 5; i++) {
+            progressMsgId = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
+            if (progressMsgId) break;
+            await new Promise(r => setTimeout(r, 300));
+          }
         }
         if (progressMsgId) {
           const { deleteTelegramMessage } = await import("../services/telegram.js");
