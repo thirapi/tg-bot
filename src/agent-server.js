@@ -95,7 +95,7 @@ const activeChats = new Set();
   if (url.pathname === '/api/process' && req.method === 'POST') {
     try {
       const body = await parseBody(req);
-      const { chatId, userPrompt, currentContents: rawContents, memories, tasks } = body;
+      const { chatId, userPrompt, currentContents: rawContents, memories, tasks, workerUrl } = body;
 
       if (!chatId) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -119,6 +119,9 @@ const activeChats = new Set();
 
       (async () => {
         const proxyEnv = buildProxyEnv(process.env);
+        if (workerUrl) {
+          proxyEnv.WORKER_URL = workerUrl;
+        }
         let isAgentRunning = true;
 
         // Keep sending typing indicator to Telegram while processing

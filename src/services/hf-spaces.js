@@ -22,6 +22,7 @@ export async function processViaSpaces(env, chatId, userPrompt, mediaData, histo
       currentContents,
       memories,
       tasks,
+      workerUrl: env.WORKER_URL || "",
     }),
   });
 

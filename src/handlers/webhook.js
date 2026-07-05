@@ -161,7 +161,11 @@ export async function handleWebhook(request, env, ctx) {
       env.CHAT_HISTORY.put(lockKey, "1", { expirationTtl: 60 })
     ]);
 
-    ctx.waitUntil(processMessage(message, env));
+    const requestUrl = new URL(request.url);
+    const workerUrl = requestUrl.origin;
+    const dynamicEnv = { ...env, WORKER_URL: workerUrl };
+
+    ctx.waitUntil(processMessage(message, dynamicEnv));
 
     return new Response("OK", { status: 200 });
 
