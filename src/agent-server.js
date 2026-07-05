@@ -187,7 +187,6 @@ const server = createServer(async (req, res) => {
 
           isAgentRunning = false; // Stop typing indicator before sending final message
 
-          // Delegate Telegram delivery and history saving to Cloudflare Worker callback
           // Strip self-reflection prompts (internal) from history before persisting
           const newContent = currentContents.slice(rawContents?.length || 0)
             .filter(c => !c._selfReflection);
@@ -196,43 +195,146 @@ const server = createServer(async (req, res) => {
             finalText = result.finalText || "tugasnya udah aku jalanin ya! tp aku ga dapet respons teks penutup dr sistem. coba cek repo kamu deh, harusnya kodenya udh ke-update";
           }
 
+          // Send Telegram message directly FIRST so user always gets answer
+          if (finalText && proxyEnv.TELEGRAM_BOT_TOKEN) {
+            try {
+              await fetch(`https://api.telegram.org/bot${proxyEnv.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: stringChatId, text: finalText, parse_mode: 'Markdown' }),
+              });
+            } catch (e) {
+              console.error('[Spaces] Direct Telegram send failed:', e.message);
+            }
+          }
+
+          // Then try callback for history saving + lock release (best-effort with retry)
+          let callbackOk = false;
           const callbackUrl = `${proxyEnv.WORKER_URL || 'https://gemini-telegram-worker.thirafi.workers.dev'}/api/spaces-callback`;
-          console.log(`[Spaces] Sending final callback to ${callbackUrl}`);
-          await fetch(callbackUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer kokoa-runner-secret'
-            },
-            body: JSON.stringify({
-              chatId: stringChatId,
-              newContents: newContent,
-              finalText: finalText,
-              isFinal: true,
-              maxHistory: 15
-            })
-          }).catch(e => console.error('[Spaces] Final callback failed:', e));
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              console.log(`[Spaces] Sending final callback (attempt ${attempt}) to ${callbackUrl}`);
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 20000);
+              await fetch(callbackUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer kokoa-runner-secret'
+                },
+                body: JSON.stringify({
+                  chatId: stringChatId,
+                  newContents: newContent,
+                  finalText: finalText,
+                  isFinal: true,
+                  maxHistory: 15
+                }),
+                signal: controller.signal,
+              });
+              clearTimeout(timeout);
+              callbackOk = true;
+              break;
+            } catch (e) {
+              clearTimeout(timeout);
+              console.error(`[Spaces] Final callback attempt ${attempt} failed:`, e.message);
+              if (attempt < 3) await new Promise(r => setTimeout(r, 2000 * attempt));
+            }
+          }
+
+          // Fallback: relay lock release + history via Telegram message
+          if (!callbackOk && proxyEnv.TELEGRAM_BOT_TOKEN) {
+            try {
+              const relay = {
+                chatId: stringChatId,
+                newContents: newContent,
+                isFinal: true,
+                maxHistory: 15,
+                token: 'kokoa-runner-secret',
+              };
+              const relayText = `__CB__ ${Buffer.from(JSON.stringify(relay)).toString('base64')}`;
+              if (relayText.length < 3800) {
+                await fetch(`https://api.telegram.org/bot${proxyEnv.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ chat_id: stringChatId, text: relayText, disable_notification: true }),
+                });
+                console.log('[Spaces] Sent relay callback via Telegram');
+              } else {
+                // History too large, send minimal relay (lock release only)
+                const minimal = { chatId: stringChatId, isFinal: true, token: 'kokoa-runner-secret' };
+                const minimalText = `__CB__ ${Buffer.from(JSON.stringify(minimal)).toString('base64')}`;
+                await fetch(`https://api.telegram.org/bot${proxyEnv.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ chat_id: stringChatId, text: minimalText, disable_notification: true }),
+                });
+                console.log('[Spaces] Sent minimal relay callback (history too large)');
+              }
+            } catch (relayError) {
+              console.error('[Spaces] Relay callback failed:', relayError.message);
+            }
+          }
 
         } catch (err) {
           console.error('[Spaces] Async agent loop error:', err);
           isAgentRunning = false;
-          // Send error message to Telegram by routing through Cloudflare Worker callback
-          try {
-            const callbackUrl = `${proxyEnv.WORKER_URL || 'https://gemini-telegram-worker.thirafi.workers.dev'}/api/spaces-callback`;
-            await fetch(callbackUrl, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer kokoa-runner-secret'
-              },
-              body: JSON.stringify({
-                chatId: stringChatId,
-                error: `yah eror pas jalanin di server: ${err.message}. coba kirim lagi ya!`,
-                isFinal: true
-              })
-            });
-          } catch (e) {
-            console.error('[Spaces] Failed to send error callback:', e);
+
+          // Send error to Telegram directly first
+          const errorMsg = `yah eror pas jalanin di server: ${err.message}. coba kirim lagi ya!`;
+          if (proxyEnv.TELEGRAM_BOT_TOKEN) {
+            try {
+              await fetch(`https://api.telegram.org/bot${proxyEnv.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: stringChatId, text: errorMsg }),
+              });
+            } catch (_) {}
+          }
+
+          // Try callback for lock release
+          let callbackOk = false;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              const callbackUrl = `${proxyEnv.WORKER_URL || 'https://gemini-telegram-worker.thirafi.workers.dev'}/api/spaces-callback`;
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 20000);
+              await fetch(callbackUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer kokoa-runner-secret'
+                },
+                body: JSON.stringify({
+                  chatId: stringChatId,
+                  error: errorMsg,
+                  isFinal: true
+                }),
+                signal: controller.signal,
+              });
+              clearTimeout(timeout);
+              callbackOk = true;
+              break;
+            } catch (e) {
+              clearTimeout(timeout);
+              console.error(`[Spaces] Error callback attempt ${attempt} failed:`, e.message);
+              if (attempt < 3) await new Promise(r => setTimeout(r, 2000 * attempt));
+            }
+          }
+
+          // Fallback: relay lock release via Telegram
+          if (!callbackOk && proxyEnv.TELEGRAM_BOT_TOKEN) {
+            try {
+              const relay = { chatId: stringChatId, error: errorMsg, isFinal: true, token: 'kokoa-runner-secret' };
+              const relayText = `__CB__ ${Buffer.from(JSON.stringify(relay)).toString('base64')}`;
+              await fetch(`https://api.telegram.org/bot${proxyEnv.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: stringChatId, text: relayText, disable_notification: true }),
+              });
+              console.log('[Spaces] Sent error relay callback via Telegram');
+            } catch (relayError) {
+              console.error('[Spaces] Error relay callback failed:', relayError.message);
+            }
           }
         } finally {
           activeChats.delete(stringChatId);

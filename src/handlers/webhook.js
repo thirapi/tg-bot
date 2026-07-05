@@ -38,6 +38,49 @@ export async function handleWebhook(request, env, ctx) {
     const text = message.text || message.caption || "";
     const normalizedText = text.trim().toLowerCase();
 
+    // Handle relay callback from Spaces via Telegram (when direct callback fails)
+    if (text.startsWith("__CB__")) {
+      ctx.waitUntil((async () => {
+        try {
+          const encoded = text.slice(6).trim();
+          const payload = JSON.parse(atob(encoded));
+          if (payload.token !== 'kokoa-runner-secret') {
+            console.warn('[Webhook] Relay callback rejected: invalid token');
+            return;
+          }
+          console.log(`[Webhook] Relay callback for chat ${payload.chatId}`);
+          if (payload.isFinal) {
+            await releaseChatLock(env, payload.chatId);
+          }
+          if (payload.newContents && payload.newContents.length > 0) {
+            const { addHistory, trimHistory } = await import("../db/index.js");
+            const cleaned = payload.newContents.map(c => ({
+              role: c.role,
+              parts: c.parts.map(p => {
+                if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
+                const cp = {};
+                if (p.text !== undefined) cp.text = p.text;
+                if (Object.keys(cp).length > 0) return cp;
+                if (p.functionCall) return { text: `[FunctionCall: ${p.functionCall.name}]` };
+                if (p.functionResponse) return { text: `[FunctionResponse: ${p.functionResponse.name}]` };
+                return { text: '' };
+              }).filter(p => p.text || Object.keys(p).length > 0)
+            }));
+            await addHistory(env, payload.chatId, cleaned);
+            await trimHistory(env, payload.chatId, payload.maxHistory || 15);
+          }
+          // Delete relay message so user doesn't see it
+          if (message.message_id) {
+            const { deleteTelegramMessage } = await import("../services/telegram.js");
+            await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, payload.chatId || chatId, message.message_id).catch(() => {});
+          }
+        } catch (e) {
+          console.error("[Webhook] Relay callback error:", e);
+        }
+      })());
+      return new Response("OK", { status: 200 });
+    }
+
     if (normalizedText === "/start" || normalizedText === "/reset") {
       ctx.waitUntil((async () => {
         await env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 });
