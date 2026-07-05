@@ -122,11 +122,22 @@ const activeChats = new Set();
         let isAgentRunning = true;
 
         // Keep sending typing indicator to Telegram while processing
+        // Keep sending typing indicator to Telegram by routing through Cloudflare Worker callback
         const sendAgentTyping = async () => {
           if (!isAgentRunning) return;
           try {
-            const { sendTelegramAction } = await import('./services/telegram.js');
-            await sendTelegramAction(proxyEnv.TELEGRAM_BOT_TOKEN, stringChatId, 'typing');
+            const callbackUrl = `${proxyEnv.WORKER_URL || 'https://gemini-telegram-worker.thirafi.workers.dev'}/api/spaces-callback`;
+            await fetch(callbackUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer kokoa-runner-secret'
+              },
+              body: JSON.stringify({
+                chatId: stringChatId,
+                action: 'typing'
+              })
+            });
           } catch (_) {}
           if (isAgentRunning) {
             setTimeout(sendAgentTyping, 4000);
@@ -168,28 +179,35 @@ const activeChats = new Set();
 
           isAgentRunning = false; // Stop typing indicator before sending final message
 
-          // Send Telegram response directly from agent server
-          if (result.escalationTriggered) {
-            // Already handled by autoEscalate inside runAgentLoop
-          } else if (result.finalText) {
-            const { sendTelegramMessage } = await import('./services/telegram.js');
-            const { markdownToRichHtml } = await import('./utils/formatter.js');
-            const richHtml = markdownToRichHtml(result.finalText);
-            await sendTelegramMessage(proxyEnv.TELEGRAM_BOT_TOKEN, stringChatId, richHtml);
-          } else {
-            const { sendTelegramMessage } = await import('./services/telegram.js');
-            await sendTelegramMessage(
-              proxyEnv.TELEGRAM_BOT_TOKEN,
-              stringChatId,
-              "tugasnya udah aku jalanin ya! tp aku ga dapet respons teks penutup dr sistem. coba cek repo kamu deh, harusnya kodenya udh ke-update"
-            );
+          // Delegate Telegram delivery and history saving to Cloudflare Worker callback
+          const newContent = currentContents.slice(rawContents?.length || 0);
+          let finalText = null;
+          if (!result.escalationTriggered) {
+            finalText = result.finalText || "tugasnya udah aku jalanin ya! tp aku ga dapet respons teks penutup dr sistem. coba cek repo kamu deh, harusnya kodenya udh ke-update";
           }
 
-          // Send callback to Cloudflare Worker to save history in D1 DB
-          const newContent = currentContents.slice(rawContents?.length || 0);
-          if (newContent.length > 0) {
+          const callbackUrl = `${proxyEnv.WORKER_URL || 'https://gemini-telegram-worker.thirafi.workers.dev'}/api/spaces-callback`;
+          console.log(`[Spaces] Sending final callback to ${callbackUrl}`);
+          await fetch(callbackUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer kokoa-runner-secret'
+            },
+            body: JSON.stringify({
+              chatId: stringChatId,
+              newContents: newContent,
+              finalText: finalText,
+              maxHistory: 15
+            })
+          }).catch(e => console.error('[Spaces] Final callback failed:', e));
+
+        } catch (err) {
+          console.error('[Spaces] Async agent loop error:', err);
+          isAgentRunning = false;
+          // Send error message to Telegram by routing through Cloudflare Worker callback
+          try {
             const callbackUrl = `${proxyEnv.WORKER_URL || 'https://gemini-telegram-worker.thirafi.workers.dev'}/api/spaces-callback`;
-            console.log(`[Spaces] Sending history callback to ${callbackUrl}`);
             await fetch(callbackUrl, {
               method: 'POST',
               headers: {
@@ -198,25 +216,11 @@ const activeChats = new Set();
               },
               body: JSON.stringify({
                 chatId: stringChatId,
-                newContents: newContent,
-                maxHistory: 15
+                error: `yah eror pas jalanin di server: ${err.message}. coba kirim lagi ya!`
               })
-            }).catch(e => console.error('[Spaces] History callback failed:', e));
-          }
-
-        } catch (err) {
-          console.error('[Spaces] Async agent loop error:', err);
-          isAgentRunning = false;
-          // Send error message to Telegram directly
-          try {
-            const { sendTelegramMessage } = await import('./services/telegram.js');
-            await sendTelegramMessage(
-              proxyEnv.TELEGRAM_BOT_TOKEN,
-              stringChatId,
-              `yah eror pas jalanin di server: ${err.message}. coba kirim lagi ya!`
-            );
+            });
           } catch (e) {
-            console.error('[Spaces] Failed to send error Telegram message:', e);
+            console.error('[Spaces] Failed to send error callback:', e);
           }
         } finally {
           activeChats.delete(stringChatId);

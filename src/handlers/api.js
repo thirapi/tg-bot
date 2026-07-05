@@ -181,30 +181,59 @@ export async function handleAPI(request, env, ctx) {
 
     try {
       const body = await request.json();
-      const { chatId, newContents, maxHistory } = body;
+      const { chatId, newContents, maxHistory, finalText, error, action } = body;
 
-      if (!chatId || !newContents) {
-        return new Response("Missing fields", { status: 400 });
+      if (!chatId) {
+        return new Response("Missing chatId", { status: 400 });
       }
 
-      const { addHistory, trimHistory } = await import("../db/index.js");
+      // Handle Telegram action (e.g., typing)
+      if (action) {
+        const { sendTelegramAction } = await import("../services/telegram.js");
+        await sendTelegramAction(env.TELEGRAM_BOT_TOKEN, chatId, action).catch(e => 
+          console.error("Failed to send action on callback:", e)
+        );
+      }
 
-      // Clean the new contents to ensure safety (strip media objects to metadata labels, etc.)
-      const cleaned = newContents.map(c => ({
-        role: c.role,
-        parts: c.parts.map(p => {
-          if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
-          const cleanedPart = {};
-          if (p.text !== undefined) cleanedPart.text = p.text;
-          if (Object.keys(cleanedPart).length > 0) return cleanedPart;
-          if (p.functionCall) return { text: `[FunctionCall: ${p.functionCall.name}]` };
-          if (p.functionResponse) return { text: `[FunctionResponse: ${p.functionResponse.name}]` };
-          return { text: '' };
-        }).filter(p => p.text || Object.keys(p).length > 0)
-      }));
+      // Handle Telegram final text response
+      if (finalText) {
+        const { sendTelegramMessage } = await import("../services/telegram.js");
+        const { markdownToRichHtml } = await import("../utils/formatter.js");
+        const richHtml = markdownToRichHtml(finalText);
+        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml).catch(e =>
+          console.error("Failed to send finalText on callback:", e)
+        );
+      }
 
-      await addHistory(env, chatId, cleaned);
-      await trimHistory(env, chatId, maxHistory || 15);
+      // Handle Telegram error response
+      if (error) {
+        const { sendTelegramMessage } = await import("../services/telegram.js");
+        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, error).catch(e =>
+          console.error("Failed to send error on callback:", e)
+        );
+      }
+
+      // Save history to D1 if new contents are present
+      if (newContents && newContents.length > 0) {
+        const { addHistory, trimHistory } = await import("../db/index.js");
+
+        // Clean the new contents to ensure safety (strip media objects to metadata labels, etc.)
+        const cleaned = newContents.map(c => ({
+          role: c.role,
+          parts: c.parts.map(p => {
+            if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
+            const cleanedPart = {};
+            if (p.text !== undefined) cleanedPart.text = p.text;
+            if (Object.keys(cleanedPart).length > 0) return cleanedPart;
+            if (p.functionCall) return { text: `[FunctionCall: ${p.functionCall.name}]` };
+            if (p.functionResponse) return { text: `[FunctionResponse: ${p.functionResponse.name}]` };
+            return { text: '' };
+          }).filter(p => p.text || Object.keys(p).length > 0)
+        }));
+
+        await addHistory(env, chatId, cleaned);
+        await trimHistory(env, chatId, maxHistory || 15);
+      }
 
       return new Response("OK", { status: 200 });
     } catch (e) {
