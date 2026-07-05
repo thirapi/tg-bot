@@ -227,10 +227,16 @@ export async function handleAPI(request, env, ctx) {
 
       // Handle final cleanup (delete progress loading message & release lock)
       if (isFinal) {
-        const progressMsgId = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
+        // KV retry untuk eventual consistency (progressMsgId ditulis ~30s sebelum callback)
+        let progressMsgId = null;
+        for (let i = 0; i < 5; i++) {
+          progressMsgId = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
+          if (progressMsgId) break;
+          await new Promise(r => setTimeout(r, 300));
+        }
         if (progressMsgId) {
           const { deleteTelegramMessage } = await import("../services/telegram.js");
-          await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, progressMsgId).catch(e =>
+          await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(progressMsgId)).catch(e =>
             console.error("Failed to delete progress message:", e)
           );
           await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
@@ -238,6 +244,10 @@ export async function handleAPI(request, env, ctx) {
 
         console.log(`Releasing D1 lock for chat: ${chatId} (spaces-callback)`);
         await releaseChatLock(env, chatId);
+
+        // Tandai callback sudah selesai + hapus pending key biar cron tidak duplicate
+        await env.CHAT_HISTORY.put(`callback_done:${chatId}`, "1", { expirationTtl: 300 }).catch(() => {});
+        await env.CHAT_HISTORY.delete(`spaces_pending:${chatId}`).catch(() => {});
 
         // Dequeue pending message if any
         const { processMessage } = await import("./message.js");

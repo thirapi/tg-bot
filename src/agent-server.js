@@ -23,7 +23,7 @@ const PORT = parseInt(process.env.PORT || '7860', 10);
 
 const workspaceStore = new Map();
 const resultsStore = new Map();
-const RESULT_TTL = 10 * 60 * 1000;
+const RESULT_TTL = 60 * 60 * 1000; // 1 jam (sama dengan TTL pending di KV)
 setInterval(() => {
   const now = Date.now();
   for (const [key, val] of resultsStore) {
@@ -211,19 +211,21 @@ const server = createServer(async (req, res) => {
           });
           console.log(`[Spaces] Result stored for chat ${stringChatId}`);
 
-          // Fast-path: coba HTTP (port 80) — mungkin tidak diblokir seperti 443.
-          // Cloudflare redirect HTTP→HTTPS, jadi data tidak sampai ke Worker.
-          // Tapi ini buat test apakah port 80 bisa tembus HF firewall.
+          // Fast-path via HTTP (port 80 tembus). Cron sebagai fallback.
           if (workerUrl) {
             const httpUrl = workerUrl.replace(/^https:\/\//, 'http://');
             fetch(`${httpUrl}/api/spaces-callback`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer kokoa-runner-secret' },
               body: JSON.stringify({ chatId: stringChatId, newContents: newContent, finalText, isFinal: true, maxHistory: 15 }),
-              redirect: 'manual',
               signal: AbortSignal.timeout(5000),
-            }).then(r => console.log(`[Spaces] HTTP port 80 reachable! Status: ${r.status}`))
-              .catch(e => console.log(`[Spaces] HTTP port 80 juga gagal: ${e.message}`));
+            }).then(r => {
+              console.log(`[Spaces] HTTP callback success: ${r.status}`);
+              if (r.ok) {
+                // Hapus result dari memory biar cron tidak duplicate
+                resultsStore.delete(stringChatId);
+              }
+            }).catch(e => console.log(`[Spaces] HTTP callback failed: ${e.message}`));
           }
 
         } catch (err) {
@@ -244,12 +246,13 @@ const server = createServer(async (req, res) => {
             fetch(`${httpUrl}/api/spaces-callback`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer kokoa-runner-secret' },
-              body: JSON.stringify({ chatId: stringChatId, error: errorMsg, isFinal: true }),
-              redirect: 'manual',
+              body: JSON.stringify({ chatId: stringChatId, error: `yah eror pas jalanin di server: ${errorMsg}. coba kirim lagi ya!`, isFinal: true }),
               signal: AbortSignal.timeout(5000),
-            }).then(r => console.log(`[Spaces] HTTP port 80 reachable (error path)! Status: ${r.status}`))
-              .catch(e => console.log(`[Spaces] HTTP port 80 juga gagal (error path): ${e.message}`));
+            }).then(r => {
+              if (r.ok) resultsStore.delete(stringChatId);
+            }).catch(e => console.log(`[Spaces] Error HTTP callback failed: ${e.message}`));
           }
+
         } finally {
           activeChats.delete(stringChatId);
         }

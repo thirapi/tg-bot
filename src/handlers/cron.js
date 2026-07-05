@@ -23,6 +23,14 @@ async function pollSpacesResults(env) {
         }
 
         if (data.status === 'not_found') {
+          // Cek apakah HTTP callback sudah handle result ini
+          const cbDone = await env.CHAT_HISTORY.get(`callback_done:${chatId}`);
+          if (cbDone) {
+            console.log(`[Cron] Callback already handled chat ${chatId}, skipping error`);
+            await env.CHAT_HISTORY.delete(keyMeta.name);
+            await env.CHAT_HISTORY.delete(`callback_done:${chatId}`).catch(() => {});
+            continue;
+          }
           console.log(`[Cron] Spaces result not found for chat ${chatId}, sending error`);
           await sendTelegramMessage(
             env.TELEGRAM_BOT_TOKEN,
@@ -42,6 +50,15 @@ async function pollSpacesResults(env) {
         }
 
         if (data.status !== 'ready') continue;
+
+        // Cek apakah HTTP callback sudah handle result ini (race condition guard)
+        const cbDone = await env.CHAT_HISTORY.get(`callback_done:${chatId}`);
+        if (cbDone) {
+          console.log(`[Cron] Callback already handled chat ${chatId}, skipping response`);
+          await env.CHAT_HISTORY.delete(keyMeta.name);
+          await env.CHAT_HISTORY.delete(`callback_done:${chatId}`).catch(() => {});
+          continue;
+        }
 
         // Result ready — send to Telegram, save history, release lock
         console.log(`[Cron] Spaces result ready for chat ${chatId}`);
