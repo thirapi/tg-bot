@@ -269,6 +269,27 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Test endpoint: cek konektivitas port dari dalam Spaces
+  if (req.url === '/api/test-ports') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    const results = {};
+    const targets = [
+      { name: 'worker-https', url: 'https://tg-bot.thirapi.workers.dev/api/health' },
+      { name: 'worker-http', url: 'http://tg-bot.thirapi.workers.dev/api/health' },
+    ];
+
+    for (const t of targets) {
+      try {
+        const out = execSync(`curl -s -o /dev/null -w "%{http_code}:%{time_total}" --max-time 5 '${t.url}'`, { timeout: 10000 }).toString().trim();
+        results[t.name] = out;
+      } catch (e) {
+        results[t.name] = `error: ${e.message}`;
+      }
+    }
+    res.end(JSON.stringify(results, null, 2));
+    return;
+  }
+
   res.writeHead(404);
   res.end('Not Found');
 });
