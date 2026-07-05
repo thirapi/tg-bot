@@ -139,7 +139,92 @@ Ringkasan alokasi timeout di seluruh sistem untuk memastikan total eksekusi tida
 
 ---
 
-## 5. Panduan Variabel Lingkungan (Environment Variables)
+## 5. HF Spaces Integration (Docker Deployment)
+
+### 5.1 Latar Belakang
+
+Cloudflare Workers memiliki batasan CPU time (10ms per request di free tier, 30s wall-clock). Untuk tugas kompleks seperti cloning repo, menjalankan shell command, atau membaca banyak file secara lokal, diperlukan environment dengan resource lebih besar.
+
+**Hugging Face Spaces (Docker)** menyediakan:
+- CPU/memory lebih besar (tanpa batasan 10ms)
+- Eksekusi hingga 240 detik per task
+- Filesystem lokal (clone repo, baca/tulis file)
+- Kemampuan menjalankan shell command (`git`, `npm`, dll)
+
+### 5.2 Arsitektur Sebelumnya (Callback)
+
+Awalnya, arsitektur menggunakan **callback langsung** dari Spaces ke Worker:
+
+```
+Telegram → Cloudflare Worker → HF Spaces (proses AI + tools)
+                                ├── Spaces → Telegram API (kirim response)
+                                └── Spaces → Worker /api/spaces-callback (simpan history + release lock)
+```
+
+Spaces bertanggung jawab mengirim response ke Telegram dan callback ke Worker.
+
+### 5.3 Masalah: HF Memblokir Outbound HTTPS
+
+Setelah deploy, ditemukan bahwa **semua outbound HTTPS dari HF Spaces gagal** dengan `ConnectTimeoutError`:
+
+```
+Telegram:     149.154.166.110:443 → ❌ ConnectTimeout
+Cloudflare:   172.67.157.80:443   → ❌ ConnectTimeout
+Cloudflare:   104.21.13.197:443   → ❌ ConnectTimeout
+```
+
+DNS resolve berhasil (IP benar), TCP SYN dikirim tapi **diam-diam di-drop firewall HF**.
+
+Berdasarkan forum Hugging Face, ini adalah **intentional policy** — HF memblokir akses ke domain social media API dan beberapa IP range Cloudflare untuk mencegah abuse. Google API (Gemini) tetap berfungsi normal.
+
+### 5.4 Solusi: Polling dari Worker ke Spaces
+
+Spaces tetap bisa **menerima koneksi masuk** (inbound) di port 7860. Solusinya: Spaces tidak perlu koneksi keluar sama sekali. Worker yang polling hasil dari Spaces.
+
+```
+Telegram → Worker → Spaces (POST /api/process)
+                     ├── Respond {status: "processing"} immediately
+                     ├── Proses AI + tools di background
+                     └── Simpan result di in-memory Map
+
+[Cron tiap 60 detik]
+Worker → Spaces (GET /api/result/{chatId})
+         ├── {status: "processing"} → tunggu cron berikutnya
+         ├── {status: "ready"} → kirim ke Telegram + simpan history + release lock
+         └── {status: "not_found"} → kirim error + cleanup (Spaces restart)
+```
+
+### 5.5 Kenapa Polling?
+
+| Alternatif | Masalah |
+|---|---|
+| WebSocket (Worker → Spaces) | Worker wall-clock 30s, Spaces perlu 240s |
+| Reverse tunnel (Spaces → Worker) | Butuh outbound — blocked |
+| Sync HTTP (Worker tunggu Spaces) | Worker timeout 30s |
+| **Polling via cron** | ✅ Work dengan inbound-only. Latensi ~60s acceptable |
+
+### 5.6 Kelebihan HF Spaces
+
+- **Filesystem akses:** Clone repo, baca file lokal, grep, run command → `runCommand` tool
+- **Waktu eksekusi panjang:** 240 detik vs 30s Worker
+- **GitHub Actions delegation:** Untuk tugas berat, Spaces bisa trigger GHA runner
+- **Self-reflection:** Spaces jalankan self-review kode setelah modifikasi file
+
+### 5.7 Progress Message ("Cocoa sedang bekerja... ⏳")
+
+Flow penanganan pesan progress:
+
+1. Worker kirim task ke Spaces → Spaces return `{status: "processing"}`
+2. Worker kirim "Cocoa sedang bekerja..." ke Telegram
+3. Worker simpan `progress_msg:{chatId}` ke KV
+4. Cron ambil result → kirim response → **hapus progress message** dari chat
+5. Kalau gagal (Spaces restart): cron kirim pesan error + hapus progress message
+
+Dengan polling, progress message **selalu dihapus** setelah response tiba — tidak seperti pendekatan callback yang rawan ghost message saat Spaces tidak bisa menghubungi Worker.
+
+---
+
+## 6. Panduan Variabel Lingkungan (Environment Variables)
 
 Berikut variabel konfigurasi di `wrangler.jsonc` atau dashboard Cloudflare yang penting untuk operasional bot ini:
 
@@ -152,30 +237,52 @@ Berikut variabel konfigurasi di `wrangler.jsonc` atau dashboard Cloudflare yang 
 | `GITHUB_PAT_TOKEN` | Personal Access Token GitHub dengan hak akses repositori yang sesuai. | `ghp_abc123...` |
 | `GEMINI_SYSTEM_PERSONA`| Perilaku dan kepribadian Cocoa. | *(Lihat wrangler.jsonc)* |
 | `GEMINI_SYSTEM_INSTRUCTION`| Instruksi teknis untuk tinjauan kode / PR GitHub. | *(Lihat wrangler.jsonc)* |
+| `HF_SPACES_URL` | URL HF Spaces Docker (aktifkan pemrosesan via Spaces). | `https://user-space.hf.space` |
+| `WORKER_URL` | URL Worker untuk callback dari Spaces/GHA (otomatis). | `https://tg-bot.workers.dev` |
+| `GROQ_API_KEY` | API Key Groq (fallback jika Gemini error). | `gsk_abc...` |
+| `BING_API_KEY` | API Key Bing Web Search. | `abc123...` |
 
 ---
 
-## 6. Struktur Direktori Proyek
+## 7. Struktur Direktori Proyek
 
 ```
 tg-bot/
 ├── src/
-│   ├── config.js              # Konstanta konfigurasi (TTL, limit, dll.)
+│   ├── index.js                # Cloudflare Worker entry (fetch + scheduled/cron)
+│   ├── agent-server.js         # HF Spaces standalone HTTP server
+│   ├── config.js               # Konstanta konfigurasi (TTL, limit, dll.)
+│   ├── db/
+│   │   ├── schema.sql          # D1 database schema
+│   │   └── index.js            # Database access layer (CRUD)
 │   ├── handlers/
-│   │   ├── webhook.js          # Entry point Cloudflare Worker, command routing
-│   │   └── message.js          # Logika pemrosesan pesan utama & agent loop
+│   │   ├── webhook.js          # Webhook, command routing, lock management
+│   │   ├── message.js          # Agent loop & tool calling
+│   │   ├── api.js              # REST endpoints (callback, context, memory)
+│   │   └── cron.js             # Scheduled handler (reminders + Spaces polling)
 │   ├── services/
 │   │   ├── gemini.js           # Integrasi Gemini API & pengecekan kuota
+│   │   ├── groq.js             # Integrasi Groq API (fallback)
 │   │   ├── github.js           # REST client helper untuk GitHub API
-│   │   ├── media.js            # Download & konversi media Telegram ke Base64
-│   │   └── telegram.js         # Pengiriman pesan & typing indicator ke Telegram
+│   │   ├── hf-spaces.js        # Bridge Worker → HF Spaces
+│   │   ├── media.js            # Download & konversi media ke Base64
+│   │   ├── search.js           # Web search + web fetch
+│   │   └── telegram.js         # Kirim pesan & typing indicator
 │   ├── tools/
-│   │   ├── definitions.js      # Definisi tool schema untuk Gemini function calling
-│   │   └── executor.js         # Eksekutor tool calls dari Gemini
-│   └── utils/
-│       ├── array.js            # Utilitas array (shuffle, bufferToBase64)
-│       └── formatter.js        # Konversi Markdown ke Telegram Rich HTML
+│   │   ├── definitions.js      # Tool schema untuk Gemini function calling
+│   │   ├── executor.js         # Eksekutor tool (GitHub, web, memory, dll)
+│   │   └── spaces-executor.js  # Eksekutor tool untuk Spaces (filesystem, shell)
+│   ├── utils/
+│   │   ├── array.js            # Utilitas array (shuffle, bufferToBase64)
+│   │   ├── formatter.js        # Konversi Markdown → Telegram HTML
+│   │   └── logger.js           # Error logging ke KV
+│   └── scripts/
+│       ├── runner-executor.js  # GHA runner entry point
+│       └── runner-gemini.js    # GHA runner agent loop
 ├── docs/
 │   └── features.md             # Dokumentasi ini
-└── wrangler.jsonc              # Konfigurasi Cloudflare Workers & env variables
+├── Dockerfile                  # HF Spaces Docker build
+├── wrangler.jsonc              # Konfigurasi Cloudflare Workers
+├── package.json
+└── README.md
 ```

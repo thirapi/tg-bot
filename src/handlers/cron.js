@@ -23,9 +23,21 @@ async function pollSpacesResults(env) {
         }
 
         if (data.status === 'not_found') {
+          console.log(`[Cron] Spaces result not found for chat ${chatId}, sending error`);
+          await sendTelegramMessage(
+            env.TELEGRAM_BOT_TOKEN,
+            chatId,
+            "server Spaces aku restart atau kereset sebelum sempat selesai. coba kirim lagi ya!",
+          );
+          const errProgressKey = `progress_msg:${chatId}`;
+          const errProgressId = await env.CHAT_HISTORY.get(errProgressKey);
+          if (errProgressId) {
+            const { deleteTelegramMessage } = await import("../services/telegram.js");
+            await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(errProgressId)).catch(() => {});
+            await env.CHAT_HISTORY.delete(errProgressKey).catch(() => {});
+          }
           await env.CHAT_HISTORY.delete(keyMeta.name);
           await releaseChatLock(env, chatId);
-          console.log(`[Cron] Spaces result not found for chat ${chatId}, cleaned up`);
           continue;
         }
 
