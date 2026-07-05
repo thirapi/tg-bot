@@ -181,7 +181,7 @@ export async function handleAPI(request, env, ctx) {
 
     try {
       const body = await request.json();
-      const { chatId, newContents, maxHistory, finalText, error, action } = body;
+      const { chatId, newContents, maxHistory, finalText, error, action, progressText, isFinal } = body;
 
       if (!chatId) {
         return new Response("Missing chatId", { status: 400 });
@@ -193,6 +193,18 @@ export async function handleAPI(request, env, ctx) {
         await sendTelegramAction(env.TELEGRAM_BOT_TOKEN, chatId, action).catch(e => 
           console.error("Failed to send action on callback:", e)
         );
+      }
+
+      // Handle progress text update by editing the progress message
+      if (progressText) {
+        const progressMsgId = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
+        if (progressMsgId) {
+          const { editTelegramMessage } = await import("../services/telegram.js");
+          const progressHtml = `Cocoa sedang menganalisis/menjalankan tugas kamu... ⏳\n\n<b>Status:</b> ${progressText}`;
+          await editTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, progressMsgId, progressHtml).catch(e =>
+            console.error("Failed to edit progress message:", e)
+          );
+        }
       }
 
       // Handle Telegram final text response
@@ -210,6 +222,23 @@ export async function handleAPI(request, env, ctx) {
         const { sendTelegramMessage } = await import("../services/telegram.js");
         await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, error).catch(e =>
           console.error("Failed to send error on callback:", e)
+        );
+      }
+
+      // Handle final cleanup (delete progress loading message & release lock)
+      if (isFinal) {
+        const progressMsgId = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
+        if (progressMsgId) {
+          const { deleteTelegramMessage } = await import("../services/telegram.js");
+          await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, progressMsgId).catch(e =>
+            console.error("Failed to delete progress message:", e)
+          );
+          await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
+        }
+
+        const lockKey = `lock:${chatId}`;
+        await env.CHAT_HISTORY.delete(lockKey).catch(e => 
+          console.error("Failed to release lock on callback:", e)
         );
       }
 

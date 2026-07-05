@@ -63,6 +63,66 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
   let escalationHinted = false;
   let escalationTriggered = false;
   const toolCache = new Map();
+  let selfReflectionRun = false;
+  let filesModified = false;
+
+  async function sendProgress(text) {
+    if (!env.WORKER_URL) return;
+    try {
+      await fetch(`${env.WORKER_URL}/api/spaces-callback`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer kokoa-runner-secret'
+        },
+        body: JSON.stringify({ chatId: String(chatId), progressText: text })
+      });
+    } catch (e) {
+      console.error("Failed to send progress callback:", e);
+    }
+  }
+
+  function truncateToolResult(result, maxChars = 15000) {
+    if (result === null || result === undefined) return result;
+    if (typeof result === 'string') {
+      if (result.length > maxChars) {
+        return result.slice(0, maxChars) + "\n\n... [Hasil dipotong karena terlalu panjang] ...";
+      }
+      return result;
+    }
+    if (typeof result === 'object') {
+      const cloned = { ...result };
+      let wasTruncated = false;
+      if (typeof cloned.content === 'string' && cloned.content.length > maxChars) {
+        cloned.content = cloned.content.slice(0, maxChars) + "\n\n... [Isi file dipotong karena terlalu panjang] ...";
+        wasTruncated = true;
+      }
+      if (typeof cloned.stdout === 'string' && cloned.stdout.length > maxChars) {
+        cloned.stdout = cloned.stdout.slice(0, maxChars) + "\n\n... [Stdout dipotong karena terlalu panjang] ...";
+        wasTruncated = true;
+      }
+      if (typeof cloned.stderr === 'string' && cloned.stderr.length > maxChars) {
+        cloned.stderr = cloned.stderr.slice(0, maxChars) + "\n\n... [Stderr dipotong karena terlalu panjang] ...";
+        wasTruncated = true;
+      }
+      if (wasTruncated) {
+        cloned.is_truncated = true;
+        return cloned;
+      }
+      try {
+        const serialized = JSON.stringify(cloned);
+        if (serialized.length > maxChars * 1.5) {
+          return {
+            warning: "Hasil tool terlalu panjang untuk ditampilkan sepenuhnya.",
+            content: serialized.slice(0, maxChars) + "\n\n... [Output JSON dipotong] ...",
+            is_truncated: true
+          };
+        }
+      } catch (_) {}
+      return cloned;
+    }
+    return result;
+  }
 
   // Tools that mutate state must NOT be cached (read-after-write must be fresh)
   const WRITE_TOOLS = new Set([
@@ -251,12 +311,19 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
           if (cached) return cached;
 
           console.log(`Executing Tool: ${name}`, args);
+          if (WRITE_TOOLS.has(name) || name === 'runCommand' || name === 'executeCommand') {
+            filesModified = true;
+          }
+          await sendProgress(`Menjalankan ${name}...`);
           try {
-            const result = await execTool(name, args, env, chatId);
+            let result = await execTool(name, args, env, chatId);
+            result = truncateToolResult(result);
             if (isCacheable) toolCache.set(cacheKey, result);
+            await sendProgress(`Selesai menjalankan ${name}.`);
             return result;
           } catch (toolErr) {
             console.error(`Tool "${name}" gagal:`, toolErr);
+            await sendProgress(`Gagal menjalankan ${name}: ${toolErr.message}`);
             if (
               (toolErr.message.includes("403") ||
                toolErr.message.includes("401") ||
@@ -314,6 +381,15 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
     const dynamicTextPart = parts.map(p => p.text).filter(Boolean).join("\n");
 
     if (dynamicTextPart) {
+      if (filesModified && !selfReflectionRun) {
+        selfReflectionRun = true;
+        await sendProgress("Memeriksa ulang hasil pekerjaan (Self-Reflection)...");
+        currentContents.push({
+          role: "user",
+          parts: [{ text: "Tolong periksa kembali pekerjaanmu (Self-Reflection). Apakah semua kode baru sudah bebas dari error sintaks, import yang kurang, atau bug logika? Jalankan perintah tsc/build/test jika perlu untuk memverifikasi. Jika ada yang kurang atau salah, perbaiki sekarang dengan tool. Jika sudah sempurna, berikan jawaban penutup." }]
+        });
+        continue;
+      }
       finalText = dynamicTextPart;
       break;
     }
@@ -403,6 +479,7 @@ export async function processMessage(message, env) {
   const chatId = String(message.chat.id);
   const lockKey = `lock:${chatId}`;
   let isProcessing = true;
+  let shouldReleaseLock = true;
 
   let typingTimer = null;
   const sendTyping = async () => {
@@ -455,7 +532,17 @@ export async function processMessage(message, env) {
 
     if (env.HF_SPACES_URL) {
       const { processViaSpaces } = await import("../services/hf-spaces.js");
-      await processViaSpaces(env, chatId, userPrompt, mediaData, history);
+      const res = await processViaSpaces(env, chatId, userPrompt, mediaData, history);
+      if (res && (res.status === "processing" || res.status === "busy")) {
+        if (res.status === "processing") {
+          const sent = await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Cocoa sedang bekerja... ⏳");
+          if (sent && sent.length > 0 && sent[0].message_id) {
+            await env.CHAT_HISTORY.put(`progress_msg:${chatId}`, String(sent[0].message_id), { expirationTtl: 600 });
+          }
+        }
+        shouldReleaseLock = false;
+        return;
+      }
       return;
     }
 
@@ -533,10 +620,11 @@ export async function processMessage(message, env) {
   } finally {
     isProcessing = false;
     clearTimeout(typingTimer);
-    console.log(`Releasing lock for chat: ${chatId}`);
-
-    await env.CHAT_HISTORY.delete(lockKey).catch((e) => {
-      console.error(`Gagal menghapus lockKey ${lockKey}:`, e);
-    });
+    if (shouldReleaseLock) {
+      console.log(`Releasing lock for chat: ${chatId}`);
+      await env.CHAT_HISTORY.delete(lockKey).catch((e) => {
+        console.error(`Gagal menghapus lockKey ${lockKey}:`, e);
+      });
+    }
   }
 }

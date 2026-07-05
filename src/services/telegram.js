@@ -23,6 +23,7 @@ export async function sendTelegramAction(token, chatId, action) {
 export async function sendTelegramMessage(token, chatId, htmlText) {
   const url = TG_API(token, "sendMessage");
   const chunks = splitIntoChunks(htmlText, TG_MAX_MESSAGE_LENGTH);
+  const sentMsgs = [];
   for (const chunk of chunks) {
     const payload = {
       chat_id: chatId,
@@ -36,11 +37,58 @@ export async function sendTelegramMessage(token, chatId, htmlText) {
     });
     if (!res.ok) {
       const plainText = stripHtml(chunk);
-      await fetchWithTimeout(url, {
+      const fallbackRes = await fetchWithTimeout(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ chat_id: chatId, text: plainText }),
       });
+      if (fallbackRes.ok) {
+        const data = await fallbackRes.json();
+        if (data.result) sentMsgs.push(data.result);
+      }
+    } else {
+      const data = await res.json();
+      if (data.result) sentMsgs.push(data.result);
     }
   }
+  return sentMsgs;
+}
+
+export async function editTelegramMessage(token, chatId, messageId, htmlText) {
+  const url = TG_API(token, "editMessageText");
+  const payload = {
+    chat_id: chatId,
+    message_id: parseInt(messageId, 10),
+    text: htmlText,
+    parse_mode: "HTML",
+  };
+  const res = await fetchWithTimeout(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }, 5000);
+  if (!res.ok) {
+    const plainText = stripHtml(htmlText);
+    await fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: parseInt(messageId, 10),
+        text: plainText,
+      }),
+    }, 5000).catch(() => {});
+  }
+}
+
+export async function deleteTelegramMessage(token, chatId, messageId) {
+  const url = TG_API(token, "deleteMessage");
+  await fetchWithTimeout(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: parseInt(messageId, 10),
+    }),
+  }, 5000).catch(() => {});
 }

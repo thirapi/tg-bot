@@ -207,6 +207,7 @@ const activeChats = new Set();
               chatId: stringChatId,
               newContents: newContent,
               finalText: finalText,
+              isFinal: true,
               maxHistory: 15
             })
           }).catch(e => console.error('[Spaces] Final callback failed:', e));
@@ -225,7 +226,8 @@ const activeChats = new Set();
               },
               body: JSON.stringify({
                 chatId: stringChatId,
-                error: `yah eror pas jalanin di server: ${err.message}. coba kirim lagi ya!`
+                error: `yah eror pas jalanin di server: ${err.message}. coba kirim lagi ya!`,
+                isFinal: true
               })
             });
           } catch (e) {
