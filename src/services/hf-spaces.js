@@ -26,11 +26,25 @@ export async function processViaSpaces(env, chatId, userPrompt, mediaData, histo
   });
 
   if (!response.ok) {
+    if (response.status === 429) {
+      await sendTelegramMessage(
+        env.TELEGRAM_BOT_TOKEN,
+        chatId,
+        "Cocoa lagi mikirin jawaban/tugas sebelumnya nih, tunggu bentar ya! Jangan dicelup pesan baru dulu."
+      );
+      return { status: "busy" };
+    }
     const errBody = await response.text();
     throw new Error(`HF Spaces error (${response.status}): ${errBody}`);
   }
 
   const result = await response.json();
+
+  if (result.status === "processing") {
+    // The HF Spaces server is running the loop asynchronously in the background.
+    // It will send the Telegram response directly and trigger a callback to save the history.
+    return { status: "processing" };
+  }
 
   const newContent = (result.newContents || currentContents).slice(history.length);
   if (newContent.length > 0) {

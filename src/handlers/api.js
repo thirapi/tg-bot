@@ -169,5 +169,49 @@ export async function handleAPI(request, env, ctx) {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
+  if (path === "/api/spaces-callback") {
+    if (request.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+
+    const auth = request.headers.get("Authorization");
+    if (auth !== `Bearer ${CALLBACK_TOKEN}`) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    try {
+      const body = await request.json();
+      const { chatId, newContents, maxHistory } = body;
+
+      if (!chatId || !newContents) {
+        return new Response("Missing fields", { status: 400 });
+      }
+
+      const { addHistory, trimHistory } = await import("../db/index.js");
+
+      // Clean the new contents to ensure safety (strip media objects to metadata labels, etc.)
+      const cleaned = newContents.map(c => ({
+        role: c.role,
+        parts: c.parts.map(p => {
+          if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
+          const cleanedPart = {};
+          if (p.text !== undefined) cleanedPart.text = p.text;
+          if (Object.keys(cleanedPart).length > 0) return cleanedPart;
+          if (p.functionCall) return { text: `[FunctionCall: ${p.functionCall.name}]` };
+          if (p.functionResponse) return { text: `[FunctionResponse: ${p.functionResponse.name}]` };
+          return { text: '' };
+        }).filter(p => p.text || Object.keys(p).length > 0)
+      }));
+
+      await addHistory(env, chatId, cleaned);
+      await trimHistory(env, chatId, maxHistory || 15);
+
+      return new Response("OK", { status: 200 });
+    } catch (e) {
+      console.error("Spaces callback error:", e);
+      return new Response("Error", { status: 500 });
+    }
+  }
+
   return new Response("Not Found", { status: 404 });
 }

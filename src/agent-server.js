@@ -89,6 +89,9 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+// Track ongoing chat processes to avoid duplicate execution on the same workspace
+const activeChats = new Set();
+
   if (url.pathname === '/api/process' && req.method === 'POST') {
     try {
       const body = await parseBody(req);
@@ -100,50 +103,127 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      const currentContents = rawContents || [{ role: 'user', parts: [{ text: userPrompt || '' }] }];
-      const proxyEnv = buildProxyEnv(process.env);
-
-      if (memories) proxyEnv.__INJECTED_MEMORIES = memories;
-      if (tasks) proxyEnv.__INJECTED_TASKS = tasks;
-
-      // Restore persisted workspace for this chat session
-      // This solves the "workspace amnesia" bug where __WORKSPACE is lost between requests
-      const workspaceKey = `workspace:${chatId}`;
-      const savedWorkspace = workspaceStore.get(workspaceKey);
-      if (savedWorkspace) {
-        proxyEnv.__WORKSPACE = savedWorkspace;
-        console.log(`[Spaces] Restored workspace for chat ${chatId}: ${savedWorkspace}`);
-      }
-
-      const providerConfigs = buildProviderConfigs(proxyEnv);
-      if (providerConfigs.length === 0) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'No AI providers configured' }));
+      const stringChatId = String(chatId);
+      if (activeChats.has(stringChatId)) {
+        res.writeHead(429, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'busy' }));
         return;
       }
 
-      const startTime = Date.now();
-      const result = await runAgentLoop(
-        currentContents, proxyEnv, chatId, userPrompt || '',
-        providerConfigs, [], startTime,
-        { executionTimeout: 240000, iterationTimeout: 30000, toolExecutor: hybridExecutor }
-      );
-
-      // Persist workspace update if cloneRepo was called during this loop
-      if (proxyEnv.__WORKSPACE && proxyEnv.__WORKSPACE !== savedWorkspace) {
-        workspaceStore.set(workspaceKey, proxyEnv.__WORKSPACE);
-        console.log(`[Spaces] Saved workspace for chat ${chatId}: ${proxyEnv.__WORKSPACE}`);
-      }
-
-      const newContents = currentContents;
-      const newHistory = newContents;
-
+      // Respond immediately to the Cloudflare Worker to prevent HTTP timeout
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        finalText: result.finalText || null,
-        escalationTriggered: result.escalationTriggered || false,
-        newContents: newHistory,
-      }));
+      res.end(JSON.stringify({ status: 'processing' }));
+
+      // Run the agent loop in the background
+      activeChats.add(stringChatId);
+
+      (async () => {
+        const proxyEnv = buildProxyEnv(process.env);
+        let isAgentRunning = true;
+
+        // Keep sending typing indicator to Telegram while processing
+        const sendAgentTyping = async () => {
+          if (!isAgentRunning) return;
+          try {
+            const { sendTelegramAction } = await import('./services/telegram.js');
+            await sendTelegramAction(proxyEnv.TELEGRAM_BOT_TOKEN, stringChatId, 'typing');
+          } catch (_) {}
+          if (isAgentRunning) {
+            setTimeout(sendAgentTyping, 4000);
+          }
+        };
+        sendAgentTyping();
+
+        try {
+          const currentContents = rawContents || [{ role: 'user', parts: [{ text: userPrompt || '' }] }];
+
+          if (memories) proxyEnv.__INJECTED_MEMORIES = memories;
+          if (tasks) proxyEnv.__INJECTED_TASKS = tasks;
+
+          // Restore persisted workspace for this chat session
+          const workspaceKey = `workspace:${stringChatId}`;
+          const savedWorkspace = workspaceStore.get(workspaceKey);
+          if (savedWorkspace) {
+            proxyEnv.__WORKSPACE = savedWorkspace;
+            console.log(`[Spaces] Restored workspace for chat ${stringChatId}: ${savedWorkspace}`);
+          }
+
+          const providerConfigs = buildProviderConfigs(proxyEnv);
+          if (providerConfigs.length === 0) {
+            throw new Error('No AI providers configured');
+          }
+
+          const startTime = Date.now();
+          const result = await runAgentLoop(
+            currentContents, proxyEnv, stringChatId, userPrompt || '',
+            providerConfigs, [], startTime,
+            { executionTimeout: 240000, iterationTimeout: 30000, toolExecutor: hybridExecutor }
+          );
+
+          // Persist workspace update if cloneRepo was called during this loop
+          if (proxyEnv.__WORKSPACE && proxyEnv.__WORKSPACE !== savedWorkspace) {
+            workspaceStore.set(workspaceKey, proxyEnv.__WORKSPACE);
+            console.log(`[Spaces] Saved workspace for chat ${stringChatId}: ${proxyEnv.__WORKSPACE}`);
+          }
+
+          isAgentRunning = false; // Stop typing indicator before sending final message
+
+          // Send Telegram response directly from agent server
+          if (result.escalationTriggered) {
+            // Already handled by autoEscalate inside runAgentLoop
+          } else if (result.finalText) {
+            const { sendTelegramMessage } = await import('./services/telegram.js');
+            const { markdownToRichHtml } = await import('./utils/formatter.js');
+            const richHtml = markdownToRichHtml(result.finalText);
+            await sendTelegramMessage(proxyEnv.TELEGRAM_BOT_TOKEN, stringChatId, richHtml);
+          } else {
+            const { sendTelegramMessage } = await import('./services/telegram.js');
+            await sendTelegramMessage(
+              proxyEnv.TELEGRAM_BOT_TOKEN,
+              stringChatId,
+              "tugasnya udah aku jalanin ya! tp aku ga dapet respons teks penutup dr sistem. coba cek repo kamu deh, harusnya kodenya udh ke-update"
+            );
+          }
+
+          // Send callback to Cloudflare Worker to save history in D1 DB
+          const newContent = currentContents.slice(rawContents?.length || 0);
+          if (newContent.length > 0) {
+            const callbackUrl = `${proxyEnv.WORKER_URL || 'https://gemini-telegram-worker.thirafi.workers.dev'}/api/spaces-callback`;
+            console.log(`[Spaces] Sending history callback to ${callbackUrl}`);
+            await fetch(callbackUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer kokoa-runner-secret'
+              },
+              body: JSON.stringify({
+                chatId: stringChatId,
+                newContents: newContent,
+                maxHistory: 15
+              })
+            }).catch(e => console.error('[Spaces] History callback failed:', e));
+          }
+
+        } catch (err) {
+          console.error('[Spaces] Async agent loop error:', err);
+          isAgentRunning = false;
+          // Send error message to Telegram directly
+          try {
+            const { sendTelegramMessage } = await import('./services/telegram.js');
+            await sendTelegramMessage(
+              proxyEnv.TELEGRAM_BOT_TOKEN,
+              stringChatId,
+              `yah eror pas jalanin di server: ${err.message}. coba kirim lagi ya!`
+            );
+          } catch (e) {
+            console.error('[Spaces] Failed to send error Telegram message:', e);
+          }
+        } finally {
+          activeChats.delete(stringChatId);
+        }
+      })();
+
+      return;
     } catch (err) {
       console.error('Agent server error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
