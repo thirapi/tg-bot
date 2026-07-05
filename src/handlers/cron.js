@@ -49,6 +49,7 @@ async function pollSpacesResults(env, ctx) {
         // Result ready — send to Telegram, save history, release lock
         console.log(`[Cron] Spaces result ready for chat ${chatId}`);
 
+        console.log(`[Cron] chatId=${chatId} newContent=${data.newContent?.length} finalText=${data.finalText?.slice(0,30)}`);
         if (data.newContent && data.newContent.length > 0) {
           const cleaned = data.newContent.map(c => ({
             role: c.role,

@@ -275,6 +275,7 @@ export async function handleAPI(request, env, ctx) {
         }
       }
 
+      console.log(`[Callback] chatId=${chatId} newContents=${newContents?.length} finalText=${finalText?.slice(0,30)}`);
       // Save history to D1 if new contents are present
       if (newContents && newContents.length > 0) {
         const { addHistory, trimHistory } = await import("../db/index.js");
