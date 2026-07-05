@@ -111,7 +111,8 @@ const server = createServer(async (req, res) => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ready', ...data }));
+    const { status: _s, ...cleanData } = data;
+    res.end(JSON.stringify({ status: 'ready', ...cleanData }));
     return;
   }
 
@@ -211,23 +212,6 @@ const server = createServer(async (req, res) => {
           });
           console.log(`[Spaces] Result stored for chat ${stringChatId}`);
 
-          // Fast-path via HTTP (port 80 tembus). Cron sebagai fallback.
-          if (workerUrl) {
-            const httpUrl = workerUrl.replace(/^https:\/\//, 'http://');
-            fetch(`${httpUrl}/api/spaces-callback`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer kokoa-runner-secret' },
-              body: JSON.stringify({ chatId: stringChatId, newContents: newContent, finalText, isFinal: true, maxHistory: 15 }),
-              signal: AbortSignal.timeout(5000),
-            }).then(r => {
-              console.log(`[Spaces] HTTP callback success: ${r.status}`);
-              if (r.ok) {
-                // Hapus result dari memory biar cron tidak duplicate
-                resultsStore.delete(stringChatId);
-              }
-            }).catch(e => console.log(`[Spaces] HTTP callback failed: ${e.message}`));
-          }
-
         } catch (err) {
           console.error('[Spaces] Async agent loop error:', err);
           const errorMsg = err.message;
@@ -240,18 +224,6 @@ const server = createServer(async (req, res) => {
             ts: Date.now()
           });
           console.log(`[Spaces] Error result stored for chat ${stringChatId}`);
-
-          if (workerUrl) {
-            const httpUrl = workerUrl.replace(/^https:\/\//, 'http://');
-            fetch(`${httpUrl}/api/spaces-callback`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer kokoa-runner-secret' },
-              body: JSON.stringify({ chatId: stringChatId, error: `yah eror pas jalanin di server: ${errorMsg}. coba kirim lagi ya!`, isFinal: true }),
-              signal: AbortSignal.timeout(5000),
-            }).then(r => {
-              if (r.ok) resultsStore.delete(stringChatId);
-            }).catch(e => console.log(`[Spaces] Error HTTP callback failed: ${e.message}`));
-          }
 
         } finally {
           activeChats.delete(stringChatId);

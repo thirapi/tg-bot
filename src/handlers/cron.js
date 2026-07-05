@@ -2,7 +2,7 @@ import { getDueReminders, markReminderTriggered, addHistory, trimHistory, releas
 import { sendTelegramMessage } from "../services/telegram.js";
 import { markdownToRichHtml } from "../utils/formatter.js";
 
-async function pollSpacesResults(env) {
+async function pollSpacesResults(env, ctx) {
   if (!env.HF_SPACES_URL) return;
 
   try {
@@ -23,14 +23,6 @@ async function pollSpacesResults(env) {
         }
 
         if (data.status === 'not_found') {
-          // Cek apakah HTTP callback sudah handle result ini
-          const cbDone = await env.CHAT_HISTORY.get(`callback_done:${chatId}`);
-          if (cbDone) {
-            console.log(`[Cron] Callback already handled chat ${chatId}, skipping error`);
-            await env.CHAT_HISTORY.delete(keyMeta.name);
-            await env.CHAT_HISTORY.delete(`callback_done:${chatId}`).catch(() => {});
-            continue;
-          }
           console.log(`[Cron] Spaces result not found for chat ${chatId}, sending error`);
           await sendTelegramMessage(
             env.TELEGRAM_BOT_TOKEN,
@@ -50,15 +42,6 @@ async function pollSpacesResults(env) {
         }
 
         if (data.status !== 'ready') continue;
-
-        // Cek apakah HTTP callback sudah handle result ini (race condition guard)
-        const cbDone = await env.CHAT_HISTORY.get(`callback_done:${chatId}`);
-        if (cbDone) {
-          console.log(`[Cron] Callback already handled chat ${chatId}, skipping response`);
-          await env.CHAT_HISTORY.delete(keyMeta.name);
-          await env.CHAT_HISTORY.delete(`callback_done:${chatId}`).catch(() => {});
-          continue;
-        }
 
         // Result ready — send to Telegram, save history, release lock
         console.log(`[Cron] Spaces result ready for chat ${chatId}`);
@@ -115,8 +98,33 @@ async function pollSpacesResults(env) {
           await env.CHAT_HISTORY.delete(progressKey).catch(() => {});
         }
 
-        // Release lock (dequeues pending messages)
+        // Release lock
         await releaseChatLock(env, chatId);
+
+        // Dequeue pending message jika ada
+        try {
+          const { processMessage } = await import("./message.js");
+          const pendingRaw = await env.CHAT_HISTORY.get(`pending:${chatId}`);
+          if (pendingRaw) {
+            await env.CHAT_HISTORY.delete(`pending:${chatId}`).catch(() => {});
+            const pending = JSON.parse(pendingRaw);
+            const { acquireChatLock } = await import("../db/index.js");
+            const acquired = await acquireChatLock(env, chatId);
+            if (acquired) {
+              const fakeMsg = {
+                chat: { id: chatId },
+                text: pending.text,
+                caption: pending.caption,
+                photo: pending.photo,
+                voice: pending.voice,
+              };
+              ctx.waitUntil(processMessage(fakeMsg, env));
+            }
+          }
+        } catch (e) {
+          console.error(`[Cron] Dequeue pending message failed for chat ${chatId}:`, e);
+        }
+
         console.log(`[Cron] Completed Spaces result for chat ${chatId}`);
 
         // Delete result from Spaces server
@@ -161,5 +169,5 @@ export async function handleCron(event, env, ctx) {
   }
 
   // 2. Poll Spaces for pending results
-  await pollSpacesResults(env);
+  await pollSpacesResults(env, ctx);
 }
