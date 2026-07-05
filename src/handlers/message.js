@@ -18,6 +18,8 @@ import {
   saveGHAContext,
   getTasks,
   getAllMemories,
+  acquireChatLock,
+  releaseChatLock,
 } from "../db/index.js";
 import { callGitHubAPI } from "../services/github.js";
 import { webSearch, webFetch } from "../services/search.js";
@@ -486,7 +488,6 @@ async function autoEscalate(env, chatId, currentContents, iteration, functionCal
 
 export async function processMessage(message, env) {
   const chatId = String(message.chat.id);
-  const lockKey = `lock:${chatId}`;
   let isProcessing = true;
   let shouldReleaseLock = true;
 
@@ -630,15 +631,27 @@ export async function processMessage(message, env) {
     isProcessing = false;
     clearTimeout(typingTimer);
     if (shouldReleaseLock) {
-      console.log(`Releasing lock for chat: ${chatId}`);
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          await env.CHAT_HISTORY.delete(lockKey);
-          break;
-        } catch (e) {
-          console.error(`Lock delete attempt ${attempt + 1} failed:`, e);
-          if (attempt < 2) await new Promise(r => setTimeout(r, 500));
+      console.log(`Releasing D1 lock for chat: ${chatId}`);
+      await releaseChatLock(env, chatId);
+      try {
+        const pendingRaw = await env.CHAT_HISTORY.get(`pending:${chatId}`);
+        if (pendingRaw) {
+          await env.CHAT_HISTORY.delete(`pending:${chatId}`).catch(() => {});
+          const pending = JSON.parse(pendingRaw);
+          const acquired = await acquireChatLock(env, chatId);
+          if (acquired) {
+            const fakeMsg = {
+              chat: { id: chatId },
+              text: pending.text,
+              caption: pending.caption,
+              photo: pending.photo,
+              voice: pending.voice,
+            };
+            await processMessage(fakeMsg, env);
+          }
         }
+      } catch (e) {
+        console.error('Dequeue pending message failed:', e);
       }
     }
   }

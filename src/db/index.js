@@ -356,3 +356,37 @@ export async function consumeGHAContext(env, id) {
     console.error("DB consumeGHAContext error:", e);
   }
 }
+
+const LOCK_TTL_SECONDS = { spaces: 300, worker: 60 };
+
+export async function acquireChatLock(env, chatId) {
+  const ttlSeconds = env.HF_SPACES_URL ? LOCK_TTL_SECONDS.spaces : LOCK_TTL_SECONDS.worker;
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    const existing = await env.DB.prepare(
+      "SELECT updated_at FROM chat_locks WHERE chat_id = ? AND status = 'locked'"
+    ).bind(chatId).first();
+    if (existing) {
+      const age = now - existing.updated_at;
+      if (age < ttlSeconds) return false;
+      await env.DB.prepare("DELETE FROM chat_locks WHERE chat_id = ?").bind(chatId).run();
+    }
+    await env.DB.prepare(
+      "INSERT INTO chat_locks (chat_id, status, updated_at) VALUES (?, 'locked', ?)"
+    ).bind(chatId, now).run();
+    return true;
+  } catch (e) {
+    console.error("acquireChatLock error:", e);
+    return true;
+  }
+}
+
+export async function releaseChatLock(env, chatId) {
+  try {
+    await env.DB.prepare(
+      "DELETE FROM chat_locks WHERE chat_id = ? AND status = 'locked'"
+    ).bind(chatId).run();
+  } catch (e) {
+    console.error("releaseChatLock error:", e);
+  }
+}

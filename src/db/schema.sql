@@ -58,5 +58,11 @@ CREATE TABLE IF NOT EXISTS gha_context (
 CREATE INDEX IF NOT EXISTS idx_gha_context_chat_id ON gha_context (chat_id);
 CREATE INDEX IF NOT EXISTS idx_gha_context_status ON gha_context (status);
 
+CREATE TABLE IF NOT EXISTS chat_locks (
+  chat_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'locked',
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
 CREATE INDEX IF NOT EXISTS idx_reminders_trigger
   ON reminders(trigger_at);

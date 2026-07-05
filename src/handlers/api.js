@@ -1,4 +1,4 @@
-import { updateTaskStatus, setMemory, deleteMemoriesByPrefix, getGHAContext, consumeGHAContext, getMemory, saveGHAContext } from "../db/index.js";
+import { updateTaskStatus, setMemory, deleteMemoriesByPrefix, getGHAContext, consumeGHAContext, getMemory, saveGHAContext, acquireChatLock, releaseChatLock } from "../db/index.js";
 
 const CALLBACK_TOKEN = "kokoa-runner-secret";
 
@@ -236,15 +236,30 @@ export async function handleAPI(request, env, ctx) {
           await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
         }
 
-        const lockKey = `lock:${chatId}`;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            await env.CHAT_HISTORY.delete(lockKey);
-            break;
-          } catch (e) {
-            console.error(`Lock delete attempt ${attempt + 1} on callback failed:`, e);
-            if (attempt < 2) await new Promise(r => setTimeout(r, 500));
+        console.log(`Releasing D1 lock for chat: ${chatId} (spaces-callback)`);
+        await releaseChatLock(env, chatId);
+
+        // Dequeue pending message if any
+        const { processMessage } = await import("./message.js");
+        try {
+          const pendingRaw = await env.CHAT_HISTORY.get(`pending:${chatId}`);
+          if (pendingRaw) {
+            await env.CHAT_HISTORY.delete(`pending:${chatId}`).catch(() => {});
+            const pending = JSON.parse(pendingRaw);
+            const acquired = await acquireChatLock(env, chatId);
+            if (acquired) {
+              const fakeMsg = {
+                chat: { id: chatId },
+                text: pending.text,
+                caption: pending.caption,
+                photo: pending.photo,
+                voice: pending.voice,
+              };
+              ctx.waitUntil(processMessage(fakeMsg, env));
+            }
           }
+        } catch (e) {
+          console.error('Dequeue pending message on callback failed:', e);
         }
       }
 

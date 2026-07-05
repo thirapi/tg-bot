@@ -3,7 +3,7 @@ import { sendTelegramMessage } from "../services/telegram.js";
 import { processMessage } from "./message.js";
 import { checkGeminiQuota } from "../services/gemini.js";
 import { checkGroqQuota } from "../services/groq.js";
-import { clearHistory } from "../db/index.js";
+import { clearHistory, acquireChatLock, releaseChatLock } from "../db/index.js";
 import { logError, getRecentErrors } from "../utils/logger.js";
 
 export async function handleWebhook(request, env, ctx) {
@@ -21,7 +21,6 @@ export async function handleWebhook(request, env, ctx) {
     }
 
     const chatId = String(message.chat.id);
-    const lockKey = `lock:${chatId}`;
     const rateLimitKey = `rate_limit:${chatId}`;
     const lastUpdateKey = `last_update:${chatId}`;
 
@@ -43,7 +42,7 @@ export async function handleWebhook(request, env, ctx) {
       ctx.waitUntil((async () => {
         await env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 });
         await clearHistory(env, chatId);
-        await env.CHAT_HISTORY.delete(lockKey).catch(() => { });
+        await releaseChatLock(env, chatId);
         await sendTelegramMessage(
           env.TELEGRAM_BOT_TOKEN,
           chatId,
@@ -79,7 +78,7 @@ export async function handleWebhook(request, env, ctx) {
           const deletePromises = allKeys.map(key => env.CHAT_HISTORY.delete(`cooldown:${key.slice(-6)}`));
           await Promise.all([
             ...deletePromises,
-            env.CHAT_HISTORY.delete(lockKey).catch(() => { })
+            releaseChatLock(env, chatId),
           ]);
           await sendTelegramMessage(
             env.TELEGRAM_BOT_TOKEN,
@@ -144,22 +143,25 @@ export async function handleWebhook(request, env, ctx) {
       }
     }
 
-    const isLocked = await env.CHAT_HISTORY.get(lockKey);
-    if (isLocked) {
-      console.log(`Chat ${chatId} is currently locked (processing), skipping.`);
+    const acquired = await acquireChatLock(env, chatId);
+    if (!acquired) {
+      console.log(`Chat ${chatId} locked (D1), queueing message.`);
+      await env.CHAT_HISTORY.put(`pending:${chatId}`, JSON.stringify({
+        updateId, text: message.text, caption: message.caption,
+        photo: message.photo, voice: message.voice,
+        timestamp: Date.now(),
+      }), { expirationTtl: 300 });
       ctx.waitUntil(sendTelegramMessage(
         env.TELEGRAM_BOT_TOKEN,
         chatId,
-        "eh sebentar ya! aku masih proses chat yg tadi nih, tunggu bentar lagi yaa",
+        "oke, pesanmu masuk antrian ya! bentar aku selesain dulu yg sebelumnya, nanti langsung aku bales.",
       ));
       return new Response("OK", { status: 200 });
     }
 
-    const lockTtl = env.HF_SPACES_URL ? 300 : 60;
     await Promise.all([
       env.CHAT_HISTORY.put(lastUpdateKey, String(updateId), { expirationTtl: 300 }),
       env.CHAT_HISTORY.put(rateLimitKey, String(now), { expirationTtl: 60 }),
-      env.CHAT_HISTORY.put(lockKey, "1", { expirationTtl: lockTtl })
     ]);
 
     const requestUrl = new URL(request.url);
