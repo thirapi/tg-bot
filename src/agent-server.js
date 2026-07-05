@@ -158,6 +158,7 @@ const server = createServer(async (req, res) => {
           proxyEnv.WORKER_URL = workerUrl;
         }
         try {
+          const originalContentsLength = rawContents?.length || 0;
           const currentContents = rawContents || [{ role: 'user', parts: [{ text: userPrompt || '' }] }];
 
           if (memories) proxyEnv.__INJECTED_MEMORIES = memories;
@@ -195,7 +196,7 @@ const server = createServer(async (req, res) => {
             console.log(`[Spaces] Saved workspace for chat ${stringChatId}: ${proxyEnv.__WORKSPACE}`);
           }
 
-          const newContent = currentContents.slice(rawContents?.length || 0)
+          const newContent = currentContents.slice(originalContentsLength)
             .filter(c => !c._selfReflection);
           let finalText = null;
           if (!result.escalationTriggered) {
