@@ -155,8 +155,14 @@ const activeChats = new Set();
           const workspaceKey = `workspace:${stringChatId}`;
           const savedWorkspace = workspaceStore.get(workspaceKey);
           if (savedWorkspace) {
-            proxyEnv.__WORKSPACE = savedWorkspace;
-            console.log(`[Spaces] Restored workspace for chat ${stringChatId}: ${savedWorkspace}`);
+            const { existsSync } = await import('fs');
+            if (existsSync(savedWorkspace)) {
+              proxyEnv.__WORKSPACE = savedWorkspace;
+              console.log(`[Spaces] Restored workspace for chat ${stringChatId}: ${savedWorkspace}`);
+            } else {
+              console.log(`[Spaces] Persisted workspace folder not found on disk (likely container restarted), clearing: ${savedWorkspace}`);
+              workspaceStore.delete(workspaceKey);
+            }
           }
 
           const providerConfigs = buildProviderConfigs(proxyEnv);
