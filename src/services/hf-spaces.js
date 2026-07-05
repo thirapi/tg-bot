@@ -43,7 +43,16 @@ export async function processViaSpaces(env, chatId, userPrompt, mediaData, histo
 
   if (result.status === "processing") {
     // The HF Spaces server is running the loop asynchronously in the background.
-    // It will send the Telegram response directly and trigger a callback to save the history.
+    // Save pending status so cron can poll for the result.
+    try {
+      await env.CHAT_HISTORY.put(
+        `spaces_pending:${chatId}`,
+        JSON.stringify({ timestamp: Date.now() }),
+        { expirationTtl: 3600 }
+      );
+    } catch (e) {
+      console.error("Failed to save spaces_pending to KV:", e.message);
+    }
     return { status: "processing" };
   }
 

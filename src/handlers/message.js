@@ -73,7 +73,7 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
   let lastProgressTime = 0;
   const PROGRESS_THROTTLE_MS = 5000;
   async function sendProgress(text) {
-    if (!env.WORKER_URL || !isSpaces) return;
+    return; // disabled — uses cron polling instead
     const now = Date.now();
     if (now - lastProgressTime < PROGRESS_THROTTLE_MS) return;
     lastProgressTime = now;
