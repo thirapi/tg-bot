@@ -212,10 +212,11 @@ const server = createServer(async (req, res) => {
           let callbackOk = false;
           const callbackUrl = `${proxyEnv.WORKER_URL || 'https://gemini-telegram-worker.thirafi.workers.dev'}/api/spaces-callback`;
           for (let attempt = 1; attempt <= 3; attempt++) {
+            let controller, timer;
             try {
               console.log(`[Spaces] Sending final callback (attempt ${attempt}) to ${callbackUrl}`);
-              const controller = new AbortController();
-              const timeout = setTimeout(() => controller.abort(), 20000);
+              controller = new AbortController();
+              timer = setTimeout(() => controller.abort(), 20000);
               await fetch(callbackUrl, {
                 method: 'POST',
                 headers: {
@@ -231,11 +232,11 @@ const server = createServer(async (req, res) => {
                 }),
                 signal: controller.signal,
               });
-              clearTimeout(timeout);
+              clearTimeout(timer);
               callbackOk = true;
               break;
             } catch (e) {
-              clearTimeout(timeout);
+              clearTimeout(timer);
               console.error(`[Spaces] Final callback attempt ${attempt} failed:`, e.message);
               if (attempt < 3) await new Promise(r => setTimeout(r, 2000 * attempt));
             }
@@ -294,10 +295,11 @@ const server = createServer(async (req, res) => {
           // Try callback for lock release
           let callbackOk = false;
           for (let attempt = 1; attempt <= 3; attempt++) {
+            let controller, timer;
             try {
               const callbackUrl = `${proxyEnv.WORKER_URL || 'https://gemini-telegram-worker.thirafi.workers.dev'}/api/spaces-callback`;
-              const controller = new AbortController();
-              const timeout = setTimeout(() => controller.abort(), 20000);
+              controller = new AbortController();
+              timer = setTimeout(() => controller.abort(), 20000);
               await fetch(callbackUrl, {
                 method: 'POST',
                 headers: {
@@ -311,11 +313,11 @@ const server = createServer(async (req, res) => {
                 }),
                 signal: controller.signal,
               });
-              clearTimeout(timeout);
+              clearTimeout(timer);
               callbackOk = true;
               break;
             } catch (e) {
-              clearTimeout(timeout);
+              clearTimeout(timer);
               console.error(`[Spaces] Error callback attempt ${attempt} failed:`, e.message);
               if (attempt < 3) await new Promise(r => setTimeout(r, 2000 * attempt));
             }
