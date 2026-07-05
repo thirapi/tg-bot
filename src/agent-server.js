@@ -279,9 +279,11 @@ const server = createServer(async (req, res) => {
     ];
 
     for (const t of targets) {
+      const start = Date.now();
       try {
-        const out = execSync(`curl -s -o /dev/null -w "%{http_code}:%{time_total}" --max-time 5 '${t.url}'`, { timeout: 10000 }).toString().trim();
-        results[t.name] = out;
+        const r = await fetch(t.url, { signal: AbortSignal.timeout(5000) });
+        const elapsed = Date.now() - start;
+        results[t.name] = `status=${r.status} elapsed=${elapsed}ms`;
       } catch (e) {
         results[t.name] = `error: ${e.message}`;
       }
