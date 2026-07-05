@@ -158,9 +158,9 @@ const server = createServer(async (req, res) => {
           proxyEnv.WORKER_URL = workerUrl;
         }
         try {
-          const originalContentsLength = rawContents?.length || 0;
+          const originalHistoryLength = rawContents ? rawContents.length - 1 : 0;
           const currentContents = rawContents || [{ role: 'user', parts: [{ text: userPrompt || '' }] }];
-          console.log(`[Spaces] Received chat ${stringChatId} rawContents.length=${rawContents?.length} userPrompt="${(userPrompt || '').slice(0,50)}"`);
+          console.log(`[Spaces] Received chat ${stringChatId} rawContents.length=${rawContents?.length} historyLength=${originalHistoryLength} userPrompt="${(userPrompt || '').slice(0,50)}"`);
 
           if (memories) proxyEnv.__INJECTED_MEMORIES = memories;
           if (tasks) proxyEnv.__INJECTED_TASKS = tasks;
@@ -197,9 +197,9 @@ const server = createServer(async (req, res) => {
             console.log(`[Spaces] Saved workspace for chat ${stringChatId}: ${proxyEnv.__WORKSPACE}`);
           }
 
-          const newContent = currentContents.slice(originalContentsLength)
+          const newContent = currentContents.slice(originalHistoryLength)
             .filter(c => !c._selfReflection);
-          console.log(`[Spaces] originalContentsLength=${originalContentsLength} currentContents.length=${currentContents.length} newContent.length=${newContent.length} roles=${newContent.map(c=>c.role).join(',')}`);
+          console.log(`[Spaces] originalHistoryLength=${originalHistoryLength} curLen=${currentContents.length} newLen=${newContent.length} roles=${newContent.map(c=>c.role).join(',')}`);
           let finalText = null;
           if (!result.escalationTriggered) {
             finalText = result.finalText || "tugasnya udah aku jalanin ya! tp aku ga dapet respons teks penutup dr sistem. coba cek repo kamu deh, harusnya kodenya udh ke-update";
