@@ -273,15 +273,18 @@ const server = createServer(async (req, res) => {
   if (req.url === '/api/test-ports') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     const results = {};
-    const targets = [
-      { name: 'worker-https', url: 'https://tg-bot.thirapi.workers.dev/api/health' },
-      { name: 'worker-http', url: 'http://tg-bot.thirapi.workers.dev/api/health' },
+    const tests = [
+      { name: 'worker-https (443)', url: 'https://tg-bot.thirapi.workers.dev/api/health' },
+      { name: 'worker-http manual (80)', url: 'http://tg-bot.thirapi.workers.dev/api/health' },
+      { name: 'worker-http follow (80)', url: 'http://tg-bot.thirapi.workers.dev/api/health' },
     ];
 
-    for (const t of targets) {
+    for (const t of tests) {
       const start = Date.now();
       try {
-        const r = await fetch(t.url, { signal: AbortSignal.timeout(5000) });
+        const opts = { signal: AbortSignal.timeout(5000) };
+        if (t.name.includes('manual')) opts.redirect = 'manual';
+        const r = await fetch(t.url, opts);
         const elapsed = Date.now() - start;
         results[t.name] = `status=${r.status} elapsed=${elapsed}ms`;
       } catch (e) {
