@@ -81,13 +81,22 @@ function selectTools(text, isSpaces) {
   let toolList = openAITools;
   if (needsSpaces) toolList = [...toolList, ...spacesAITools];
 
-  return toolList.filter(tool => {
+  const filtered = toolList.filter(tool => {
     const name = tool.function.name;
     if (ESSENTIAL_TOOLS.includes(name)) return true;
     if (needsGithub && GITHUB_TOOLS.includes(name)) return true;
     if (needsSpaces && SPACES_TOOLS.includes(name)) return true;
     return false;
   });
+
+  // Fallback: if only essential tools matched (no github/spaces detected),
+  // return ALL available tools so AI is never capability-blocked by keyword mismatch
+  const essentialCount = filtered.filter(t => ESSENTIAL_TOOLS.includes(t.function.name)).length;
+  if (filtered.length === essentialCount && !needsGithub && !needsSpaces) {
+    return toolList; // full tool set
+  }
+
+  return filtered;
 }
 
 function estimateTokens(str) {
@@ -127,6 +136,18 @@ async function buildSystemMessage(env, chatId) {
 
   const reminderHint =
     "kalo pengguna minta diingetin sesuatu, pake `setReminder`. nanti bakal dikirim otomatis.";
+
+  const approvalHint =
+    "PENTING — EKSEKUSI SETELAH APPROVAL: " +
+    "kalo kamu sudah presentasi rencana/langkah ke user, dan user merespons dengan persetujuan " +
+    "(seperti: 'oke', 'setuju', 'lanjut', 'bisa', 'ya', 'fix it', 'benahi', 'kerjakan'), " +
+    "LANGSUNG EKSEKUSI tanpa tanya opsi lagi. " +
+    "Jangan ulangi pertanyaan klarifikasi yang sudah dijawab di history percakapan.";
+
+  // Inject active workspace so AI knows which repo is currently cloned
+  const workspaceContext = env.__WORKSPACE
+    ? `[Workspace aktif: repo sudah ter-clone di ${env.__WORKSPACE}. Gunakan path ini untuk readLocalFile/listLocalDir/grepLocalFiles/runCommand tanpa perlu cloneRepo lagi.]`
+    : `[Workspace: belum ada repo yang ter-clone. Panggil cloneRepo(repo) dulu sebelum membaca file lokal.]`;
 
   const wibTime = new Date().toLocaleString("id-ID", {
     timeZone: "Asia/Jakarta",
@@ -170,6 +191,7 @@ async function buildSystemMessage(env, chatId) {
     systemPersona,
     systemInstruction,
     memoryContext,
+    env.IS_SPACES ? workspaceContext : null,
     limitsContext,
     webToolHint,
     env.IS_SPACES ? spacesHint : null,
@@ -177,6 +199,7 @@ async function buildSystemMessage(env, chatId) {
     planningHint,
     memoryHint,
     reminderHint,
+    approvalHint,
     personaReinforcement,
     unrestrictedInstruction,
     timeContext,
@@ -314,8 +337,25 @@ export async function fetchGroqGenerate(model, key, contents, env, chatId) {
   const MAX_INPUT_TOKENS = 9000;
 
   let estimated = estimateTokens(JSON.stringify({ messages: convMessages, tools }));
+  // Trim messages to fit token budget, but ALWAYS remove in pairs to avoid orphan tool messages.
+  // Pair = [assistant with tool_calls] + [tool response(s)]. Never split a pair.
   while (estimated > MAX_INPUT_TOKENS && convMessages.length > 4) {
-    convMessages.splice(1, 1);
+    // Find first non-system message to remove (index 1)
+    // If it's an assistant with tool_calls, also remove the following tool responses
+    let removeCount = 1;
+    const candidate = convMessages[1];
+    if (candidate?.role === 'assistant' && candidate.tool_calls?.length > 0) {
+      // Also remove all consecutive tool messages that follow
+      let j = 2;
+      while (j < convMessages.length && convMessages[j].role === 'tool') {
+        j++;
+        removeCount++;
+      }
+    } else if (candidate?.role === 'tool') {
+      // Orphan tool message — skip it too (shouldn't happen but guard anyway)
+      removeCount = 1;
+    }
+    convMessages.splice(1, removeCount);
     estimated = estimateTokens(JSON.stringify({ messages: convMessages, tools }));
   }
 

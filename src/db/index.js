@@ -51,6 +51,7 @@ export async function clearHistory(env, chatId) {
 export async function trimHistory(env, chatId, maxPairs) {
   try {
     const maxRows = maxPairs * 6;
+    // Step 1: Delete oldest rows beyond the limit
     await env.DB.prepare(
       `DELETE FROM conversations
        WHERE chat_id = ? AND id NOT IN (
@@ -60,6 +61,23 @@ export async function trimHistory(env, chatId, maxPairs) {
          LIMIT ?
        )`
     ).bind(chatId, chatId, Math.min(maxRows, MAX_ROWS_PER_CHAT)).run();
+
+    // Step 2: Ensure conversation starts with a 'user' role row.
+    // If trim cut in the middle of a turn, leading model/function rows are now orphans
+    // and will cause Gemini/Groq API errors. Delete them until we hit a user row.
+    let keepDeleting = true;
+    while (keepDeleting) {
+      const { results } = await env.DB.prepare(
+        `SELECT id, role FROM conversations WHERE chat_id = ? ORDER BY id ASC LIMIT 1`
+      ).bind(chatId).all();
+      if (results.length === 0 || results[0].role === 'user') {
+        keepDeleting = false;
+      } else {
+        await env.DB.prepare(
+          `DELETE FROM conversations WHERE id = ?`
+        ).bind(results[0].id).run();
+      }
+    }
   } catch (e) {
     console.error("DB trimHistory error:", e);
   }

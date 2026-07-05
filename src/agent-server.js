@@ -21,6 +21,10 @@ try {
 
 const PORT = parseInt(process.env.PORT || '7860', 10);
 
+// Persists __WORKSPACE (active cloned repo path) across HTTP requests per chatId.
+// Lives as long as the Node.js process runs — no disk I/O needed.
+const workspaceStore = new Map();
+
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -39,7 +43,7 @@ function parseBody(req) {
 function buildProxyEnv(envVars) {
   const inMemoryKV = new Map();
 
-  return {
+  const proxyEnv = {
     ...envVars,
     TELEGRAM_BOT_TOKEN: envVars.TELEGRAM_BOT_TOKEN || '',
     GEMINI_API_KEYS: envVars.GEMINI_API_KEYS || '',
@@ -63,6 +67,7 @@ function buildProxyEnv(envVars) {
       delete: async (key) => inMemoryKV.delete(key),
     },
   };
+  return proxyEnv;
 }
 
 const server = createServer(async (req, res) => {
@@ -101,6 +106,15 @@ const server = createServer(async (req, res) => {
       if (memories) proxyEnv.__INJECTED_MEMORIES = memories;
       if (tasks) proxyEnv.__INJECTED_TASKS = tasks;
 
+      // Restore persisted workspace for this chat session
+      // This solves the "workspace amnesia" bug where __WORKSPACE is lost between requests
+      const workspaceKey = `workspace:${chatId}`;
+      const savedWorkspace = workspaceStore.get(workspaceKey);
+      if (savedWorkspace) {
+        proxyEnv.__WORKSPACE = savedWorkspace;
+        console.log(`[Spaces] Restored workspace for chat ${chatId}: ${savedWorkspace}`);
+      }
+
       const providerConfigs = buildProviderConfigs(proxyEnv);
       if (providerConfigs.length === 0) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -114,6 +128,12 @@ const server = createServer(async (req, res) => {
         providerConfigs, [], startTime,
         { executionTimeout: 240000, iterationTimeout: 30000, toolExecutor: hybridExecutor }
       );
+
+      // Persist workspace update if cloneRepo was called during this loop
+      if (proxyEnv.__WORKSPACE && proxyEnv.__WORKSPACE !== savedWorkspace) {
+        workspaceStore.set(workspaceKey, proxyEnv.__WORKSPACE);
+        console.log(`[Spaces] Saved workspace for chat ${chatId}: ${proxyEnv.__WORKSPACE}`);
+      }
 
       const newContents = currentContents;
       const newHistory = newContents;

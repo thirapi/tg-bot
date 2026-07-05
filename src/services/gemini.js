@@ -46,6 +46,13 @@ const memoryHint =
 const reminderHint =
   "kalo pengguna minta diingetin sesuatu, pake `setReminder`. nanti bakal dikirim otomatis.";
 
+const approvalHint =
+  "PENTING — EKSEKUSI SETELAH APPROVAL: " +
+  "kalo kamu sudah presentasi rencana/langkah ke user, dan user merespons dengan persetujuan " +
+  "(seperti: 'oke', 'setuju', 'lanjut', 'bisa', 'ya', 'fix it', 'benahi', 'kerjakan'), " +
+  "LANGSUNG EKSEKUSI tanpa tanya opsi lagi. " +
+  "Jangan ulangi pertanyaan klarifikasi yang sudah dijawab di history percakapan.";
+
 export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
@@ -79,6 +86,11 @@ export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
     ? "[Memori terbaru:]\n" + memories.map(m => `- ${m.key}: ${m.value}`).join("\n") + "\n(ada " + (memories.length) + " memori terbaru ditampilkan. panggil recallAll untuk lihat semua)"
     : "";
 
+  // Inject active workspace so AI knows which repo is currently cloned
+  const workspaceContext = env.__WORKSPACE
+    ? `[Workspace aktif: repo sudah ter-clone di ${env.__WORKSPACE}. Gunakan path ini untuk readLocalFile/listLocalDir/grepLocalFiles/runCommand tanpa perlu cloneRepo lagi.]`
+    : `[Workspace: belum ada repo yang ter-clone. Panggil cloneRepo(repo) dulu sebelum membaca file lokal.]`;
+
   const limitsContext =
     "[batasan lingkungan:]\n" +
     "- kamu jalan di dedicated server, punya cukup waktu dan iterasi buat ngerjain tugas kompleks\n" +
@@ -91,6 +103,7 @@ export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
     systemPersona,
     systemInstruction,
     memoryContext,
+    env.IS_SPACES ? workspaceContext : null,
     limitsContext,
     webToolHint,
     env.IS_SPACES ? spacesHint : null,
@@ -98,6 +111,7 @@ export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
     planningHint,
     memoryHint,
     reminderHint,
+    approvalHint,
     escalationHint,
     personaReinforcement,
     unrestrictedInstruction,

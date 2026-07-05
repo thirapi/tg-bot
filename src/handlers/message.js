@@ -64,6 +64,15 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
   let escalationTriggered = false;
   const toolCache = new Map();
 
+  // Tools that mutate state must NOT be cached (read-after-write must be fresh)
+  const WRITE_TOOLS = new Set([
+    'createOrUpdateFile', 'deleteFile', 'createGitHubIssue', 'createIssueComment',
+    'createPullRequest', 'mergePullRequest', 'updateIssueState', 'updatePRState',
+    'addLabels', 'assignUser', 'remember', 'forget', 'createTaskPlan',
+    'updateTaskStatus', 'clearTaskPlan', 'setReminder', 'deleteReminder',
+    'triggerDeveloperWorkflow',
+  ]);
+
   if (!startTime) startTime = Date.now();
 
   while (iteration < MAX_AGENT_ITERATIONS) {
@@ -236,13 +245,15 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
         const { name, args } = call.functionCall;
         return (async () => {
           const cacheKey = `${name}:${JSON.stringify(args)}`;
-          const cached = toolCache.get(cacheKey);
+          // Only cache read-only tools — write tools must always execute fresh
+          const isCacheable = !WRITE_TOOLS.has(name);
+          const cached = isCacheable ? toolCache.get(cacheKey) : null;
           if (cached) return cached;
 
           console.log(`Executing Tool: ${name}`, args);
           try {
             const result = await execTool(name, args, env, chatId);
-            toolCache.set(cacheKey, result);
+            if (isCacheable) toolCache.set(cacheKey, result);
             return result;
           } catch (toolErr) {
             console.error(`Tool "${name}" gagal:`, toolErr);
@@ -321,9 +332,10 @@ function isHeavyTask(iteration, toolCalls, userMessage) {
   const usedFileTools = toolCalls?.some(tc =>
     HEAVY_FILE_TOOLS.has(tc.functionCall?.name)
   );
-  const heavyKeywords = /(bikin|buat|ubah|refactor|analyze|analisa|test|build|deploy|install|tambah|hapus|perbaiki|fix|feature|fitur|tulis|koding|code|implement)/i;
-  const userHeavy = heavyKeywords.test(userMessage || '');
-  return usedFileTools || userHeavy || iteration >= 3;
+  // Only escalate if BOTH: heavy file tools were used AND iterations are high
+  // Removed userMessage keyword matching — too many false positives (e.g. "analisa" triggers GHA even for simple tasks)
+  // Raised threshold from 3 to 5 so AI has room to complete moderate tasks independently
+  return usedFileTools && iteration >= 5;
 }
 
 function extractTargetRepo(toolCalls, currentContents) {
@@ -452,6 +464,11 @@ export async function processMessage(message, env) {
       throw new Error("gak ada provider AI yang aktif. cek konfigurasi API key kamu ya!");
     }
 
+    // Build userParts from text prompt and optional media
+    const userParts = [];
+    if (userPrompt) userParts.push({ text: userPrompt });
+    if (mediaData) userParts.push(mediaData);
+
     let currentContents = [...history, { role: "user", parts: userParts }];
     const startTime = Date.now();
 
@@ -477,6 +494,7 @@ export async function processMessage(message, env) {
       }
     } else if (result.finalText) {
       const richHtml = markdownToRichHtml(result.finalText);
+      // sendTelegramMessage already handles splitting for messages > TG_MAX_MESSAGE_LENGTH
       await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml);
 
       const newContent = currentContents.slice(history.length);
