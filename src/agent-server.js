@@ -204,7 +204,7 @@ const server = createServer(async (req, res) => {
                 body: JSON.stringify({ chat_id: stringChatId, text: finalText, parse_mode: 'Markdown' }),
               });
             } catch (e) {
-              console.error('[Spaces] Direct Telegram send failed:', e.message);
+              console.error('[Spaces] Direct Telegram send failed:', e.message, e.cause);
             }
           }
 
@@ -237,7 +237,7 @@ const server = createServer(async (req, res) => {
               break;
             } catch (e) {
               clearTimeout(timer);
-              console.error(`[Spaces] Final callback attempt ${attempt} failed:`, e.message);
+              console.error(`[Spaces] Final callback attempt ${attempt} failed:`, e.message, e.cause);
               if (attempt < 3) await new Promise(r => setTimeout(r, 2000 * attempt));
             }
           }
@@ -272,7 +272,7 @@ const server = createServer(async (req, res) => {
                 console.log('[Spaces] Sent minimal relay callback (history too large)');
               }
             } catch (relayError) {
-              console.error('[Spaces] Relay callback failed:', relayError.message);
+              console.error('[Spaces] Relay callback failed:', relayError.message, relayError.cause);
             }
           }
 

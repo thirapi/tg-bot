@@ -541,19 +541,23 @@ export async function processMessage(message, env) {
     }
 
     if (env.HF_SPACES_URL) {
-      const { processViaSpaces } = await import("../services/hf-spaces.js");
-      const res = await processViaSpaces(env, chatId, userPrompt, mediaData, history);
-      if (res && (res.status === "processing" || res.status === "busy")) {
-        if (res.status === "processing") {
-          const sent = await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Cocoa sedang bekerja... ⏳");
-          if (sent && sent.length > 0 && sent[0].message_id) {
-            await env.CHAT_HISTORY.put(`progress_msg:${chatId}`, String(sent[0].message_id), { expirationTtl: 600 });
+      try {
+        const { processViaSpaces } = await import("../services/hf-spaces.js");
+        const res = await processViaSpaces(env, chatId, userPrompt, mediaData, history);
+        if (res && (res.status === "processing" || res.status === "busy")) {
+          if (res.status === "processing") {
+            const sent = await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Cocoa sedang bekerja... ⏳");
+            if (sent && sent.length > 0 && sent[0].message_id) {
+              await env.CHAT_HISTORY.put(`progress_msg:${chatId}`, String(sent[0].message_id), { expirationTtl: 600 });
+            }
           }
+          shouldReleaseLock = false;
+          return;
         }
-        shouldReleaseLock = false;
         return;
+      } catch (e) {
+        console.error("Spaces unreachable, falling back to direct processing:", e.message);
       }
-      return;
     }
 
     const providerConfigs = buildProviderConfigs(env);
