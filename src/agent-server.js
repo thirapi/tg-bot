@@ -179,7 +179,8 @@ const server = createServer(async (req, res) => {
               const text = await res.text();
               console.warn(`[Spaces] Callback returned ${res.status} for chat ${stringChatId} (attempt ${attempt}): ${text.slice(0, 200)}`);
             } catch (e) {
-              console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}`);
+              const cause = e.cause ? ` | cause: ${e.cause?.code || e.cause?.message || JSON.stringify(e.cause)}` : '';
+              console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}${cause}`);
             }
             if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
           }

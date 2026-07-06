@@ -94,11 +94,15 @@ export async function pollSpacesResult(env, chatId, progressMsgId) {
   const maxTime = SPACES_POLL_INTERVAL * SPACES_POLL_MAX_ATTEMPTS;
   const startTime = Date.now();
   let attempt = 0;
+  let delay = 5000;
 
   while (Date.now() - startTime < maxTime) {
     attempt++;
 
-    await new Promise(r => setTimeout(r, SPACES_POLL_INTERVAL));
+    if (attempt > 1) {
+      await new Promise(r => setTimeout(r, delay));
+      delay = Math.min(delay + 5000, 10000);
+    }
 
     try {
       const res = await fetch(`${env.HF_SPACES_URL}/api/result/${chatId}`, {
