@@ -159,29 +159,33 @@ const server = createServer(async (req, res) => {
         }
 
         async function sendCallback(body) {
-          const url = `${workerUrl}/api/spaces-callback`;
+          const baseUrl = workerUrl.replace(/\/+$/, '') + '/api/spaces-callback';
           const MAX_ATTEMPTS = 3;
-          const delays = [1000, 3000, 5000];
+          const delays = [2000, 5000, 10000];
           for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
+              // Cache buster + Connection:close to force fresh TCP/TLS per attempt
+              const url = baseUrl + '?_=' + Date.now() + '_' + attempt;
               const res = await fetch(url, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                   'Authorization': 'Bearer kokoa-runner-secret',
                   'User-Agent': 'KokoaBot/1.0',
+                  'Connection': 'close',
                 },
                 body: JSON.stringify(body),
-                signal: AbortSignal.timeout(15000),
+                signal: AbortSignal.timeout(20000),
               });
+              const bodyText = await res.text().catch(() => '');
               if (res.ok) {
                 console.log(`[Spaces] HTTPS callback success for chat ${stringChatId} (attempt ${attempt})`);
                 resultsStore.delete(stringChatId);
                 return;
               }
-              console.warn(`[Spaces] Callback returned ${res.status} for chat ${stringChatId} (attempt ${attempt})`);
+              console.warn(`[Spaces] Callback returned ${res.status} for chat ${stringChatId} (attempt ${attempt}): ${bodyText.slice(0, 200)}`);
             } catch (e) {
-              console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}`);
+              console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}`, e.cause || e.stack?.split('\n').slice(0, 3).join(' ') || '');
             }
             if (attempt < MAX_ATTEMPTS) {
               await new Promise(r => setTimeout(r, delays[attempt - 1]));
