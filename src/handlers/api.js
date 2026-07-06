@@ -227,6 +227,13 @@ export async function handleAPI(request, env, ctx) {
 
       // Handle final cleanup (delete progress loading message & release lock)
       if (isFinal) {
+        const mutexKey = `hdl:${chatId}`;
+        if (await env.CHAT_HISTORY.get(mutexKey)) {
+          console.log(`[Callback] Chat ${chatId} already handled, skipping callback finalize`);
+          return new Response("OK", { status: 200 });
+        }
+        await env.CHAT_HISTORY.put(mutexKey, "1", { expirationTtl: 120 });
+
         // progressMsgId dari body callback (direct pass, no KV)
         let progressMsgId = body.progressMsgId;
         if (!progressMsgId) {

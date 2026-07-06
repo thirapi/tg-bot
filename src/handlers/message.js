@@ -553,6 +553,8 @@ export async function processMessage(message, env) {
         const res = await processViaSpaces(env, chatId, userPrompt, mediaData, history, progressMsgId);
         if (res && res.status === "processing") {
           shouldReleaseLock = false;
+          const { pollSpacesResult } = await import("../services/spaces-poll.js");
+          await pollSpacesResult(env, chatId, progressMsgId);
           return;
         }
 

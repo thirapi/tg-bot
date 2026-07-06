@@ -1,7 +1,5 @@
 import { createServer } from 'http';
-import https from 'https';
 import { execSync } from 'child_process';
-import { resolve6 } from 'dns/promises';
 import { runAgentLoop, buildProviderConfigs } from './handlers/message.js';
 import { executeTool } from './tools/executor.js';
 import { executeSpacesTool, isSpacesTool } from './tools/spaces-executor.js';
@@ -161,63 +159,31 @@ const server = createServer(async (req, res) => {
         }
 
         async function sendCallback(body) {
-          const hostname = new URL(workerUrl).hostname;
-          const path = '/api/spaces-callback';
-          const bodyStr = JSON.stringify(body);
-          let ipv6 = null;
-
-          try {
-            const addrs = await resolve6(hostname);
-            ipv6 = addrs[0];
-            console.log(`[Spaces] Resolved IPv6 for ${hostname}: ${ipv6}`);
-          } catch (e) {
-            console.warn(`[Spaces] No IPv6 for ${hostname}, skipping callback: ${e.message}`);
-            return; // no IPv6, cron will handle
-          }
-
+          const url = `${workerUrl}/api/spaces-callback?_=${Date.now()}`;
           for (let attempt = 1; attempt <= 2; attempt++) {
             try {
-              const result = await new Promise((resolve, reject) => {
-                const req = https.request({
-                  host: ipv6,
-                  port: 443,
-                  path: path + '?_=' + Date.now() + '_' + attempt,
-                  method: 'POST',
-                  servername: hostname,
-                  family: 6,
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(bodyStr),
-                    'Authorization': 'Bearer kokoa-runner-secret',
-                    'User-Agent': 'KokoaBot/1.0',
-                    'Connection': 'close',
-                    'Host': hostname,
-                  },
-                  timeout: 15000,
-                  rejectUnauthorized: true,
-                }, (res) => {
-                  let data = '';
-                  res.on('data', c => data += c);
-                  res.on('end', () => resolve({ ok: res.statusCode === 200, status: res.statusCode, text: data }));
-                });
-                req.on('error', reject);
-                req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-                req.write(bodyStr);
-                req.end();
+              const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer kokoa-runner-secret',
+                },
+                body: JSON.stringify(body),
+                signal: AbortSignal.timeout(15000),
               });
-
-              if (result.ok) {
-                console.log(`[Spaces] IPv6 callback success for chat ${stringChatId} (attempt ${attempt})`);
+              if (res.ok) {
+                console.log(`[Spaces] Callback success for chat ${stringChatId} (attempt ${attempt})`);
                 resultsStore.delete(stringChatId);
                 return;
               }
-              console.warn(`[Spaces] IPv6 callback returned ${result.status} for chat ${stringChatId} (attempt ${attempt}): ${result.text.slice(0, 200)}`);
+              const text = await res.text();
+              console.warn(`[Spaces] Callback returned ${res.status} for chat ${stringChatId} (attempt ${attempt}): ${text.slice(0, 200)}`);
             } catch (e) {
-              console.warn(`[Spaces] IPv6 callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}`);
+              console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}`);
             }
             if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
           }
-          console.error(`[Spaces] IPv6 callback failed for chat ${stringChatId}, cron will handle`);
+          console.error(`[Spaces] Callback failed for chat ${stringChatId}, cron will handle`);
         }
 
         try {

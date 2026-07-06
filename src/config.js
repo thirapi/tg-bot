@@ -4,3 +4,6 @@ export const MAX_AGENT_ITERATIONS = 50;
 export const EXECUTION_TIMEOUT = 23000;
 export const AGENT_ITERATION_TIMEOUT = 5000;
 export const TG_MAX_MESSAGE_LENGTH = 4000;
+
+export const SPACES_POLL_INTERVAL = 20000;
+export const SPACES_POLL_MAX_ATTEMPTS = 4;
