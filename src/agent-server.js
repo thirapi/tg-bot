@@ -37,13 +37,28 @@ const activeChats = new Set();
 
 let lastWorkerUrl = null;
 let heartbeatInterval = null;
-function startHeartbeat(url) {
+function startHeartbeat(workerUrl) {
   if (heartbeatInterval) return;
-  console.log(`[Heartbeat] Starting keep-warm pings to ${url} every ${SPACES_HEARTBEAT_INTERVAL}ms`);
+  console.log(`[Heartbeat] Starting keep-warm pings to ${workerUrl} every ${SPACES_HEARTBEAT_INTERVAL}ms`);
   heartbeatInterval = setInterval(async () => {
+    const url = new URL(`${workerUrl}/api/health`);
+    const start = Date.now();
     try {
-      const res = await fetch(`${url}/api/health?_=${Date.now()}`, { method: 'GET', signal: AbortSignal.timeout(5000) });
-      if (!res.ok) console.warn(`[Heartbeat] Ping failed: ${res.status}`);
+      await new Promise((resolve, reject) => {
+        const req = https.request({
+          hostname: url.hostname,
+          path: url.pathname + url.search + `?_=${Date.now()}`,
+          method: 'GET',
+          timeout: 5000,
+          keepAlive: false,
+        }, (res) => {
+          res.resume();
+          resolve();
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+        req.end();
+      });
     } catch (e) {
       console.warn(`[Heartbeat] Ping error: ${e.message}`);
     }
