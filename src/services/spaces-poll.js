@@ -91,7 +91,7 @@ export async function handleSpacesResult(env, chatId, data, progressMsgId) {
 }
 
 export async function pollSpacesResult(env, chatId, progressMsgId) {
-  const maxTime = SPACES_POLL_INTERVAL * SPACES_POLL_MAX_ATTEMPTS;
+  const maxTime = 30000;
   const startTime = Date.now();
   let attempt = 0;
   let delay = 5000;

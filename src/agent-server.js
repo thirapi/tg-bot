@@ -160,7 +160,8 @@ const server = createServer(async (req, res) => {
 
         async function sendCallback(body) {
           const url = `${workerUrl}/api/spaces-callback?_=${Date.now()}`;
-          for (let attempt = 1; attempt <= 2; attempt++) {
+          const delays = [2000, 5000, 10000];
+          for (let attempt = 1; attempt <= 4; attempt++) {
             try {
               const res = await fetch(url, {
                 method: 'POST',
@@ -169,7 +170,7 @@ const server = createServer(async (req, res) => {
                   'Authorization': 'Bearer kokoa-runner-secret',
                 },
                 body: JSON.stringify(body),
-                signal: AbortSignal.timeout(15000),
+                signal: AbortSignal.timeout(8000),
               });
               if (res.ok) {
                 console.log(`[Spaces] Callback success for chat ${stringChatId} (attempt ${attempt})`);
@@ -182,9 +183,9 @@ const server = createServer(async (req, res) => {
               const cause = e.cause ? ` | cause: ${e.cause?.code || e.cause?.message || JSON.stringify(e.cause)}` : '';
               console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}${cause}`);
             }
-            if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
+            if (attempt < 4) await new Promise(r => setTimeout(r, delays[attempt - 1]));
           }
-          console.error(`[Spaces] Callback failed for chat ${stringChatId}, cron will handle`);
+          console.error(`[Spaces] Callback failed for chat ${stringChatId}, short-poll will handle`);
         }
 
         try {
