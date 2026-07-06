@@ -1,4 +1,5 @@
 import { createServer } from 'http';
+import https from 'https';
 import { execSync } from 'child_process';
 import { runAgentLoop, buildProviderConfigs } from './handlers/message.js';
 import { executeTool } from './tools/executor.js';
@@ -159,31 +160,48 @@ const server = createServer(async (req, res) => {
         }
 
         async function sendCallback(body) {
-          const url = `${workerUrl}/api/spaces-callback?_=${Date.now()}`;
-          const delays = [2000, 5000, 10000];
+          const url = new URL(`${workerUrl}/api/spaces-callback`);
+          const bodyStr = JSON.stringify(body);
           for (let attempt = 1; attempt <= 4; attempt++) {
             try {
-              const res = await fetch(url, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': 'Bearer kokoa-runner-secret',
-                },
-                body: JSON.stringify(body),
-                signal: AbortSignal.timeout(8000),
+              const result = await new Promise((resolve, reject) => {
+                const req = https.request({
+                  hostname: url.hostname,
+                  path: url.pathname + url.search + `?_=${Date.now()}`,
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer kokoa-runner-secret',
+                    'Content-Length': Buffer.byteLength(bodyStr),
+                  },
+                  timeout: 12000,
+                  keepAlive: false,
+                }, (res) => {
+                  let data = '';
+                  res.on('data', c => data += c);
+                  res.on('end', () => {
+                    resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, text: data });
+                  });
+                });
+                req.on('error', (e) => {
+                  const cause = e.cause ? ` | cause: ${e.cause?.code || e.cause?.message || JSON.stringify(e.cause)}` : '';
+                  reject({ message: e.message, cause });
+                });
+                req.on('timeout', () => { req.destroy(); reject({ message: 'timeout', cause: '' }); });
+                req.write(bodyStr);
+                req.end();
               });
-              if (res.ok) {
+
+              if (result.ok) {
                 console.log(`[Spaces] Callback success for chat ${stringChatId} (attempt ${attempt})`);
                 resultsStore.delete(stringChatId);
                 return;
               }
-              const text = await res.text();
-              console.warn(`[Spaces] Callback returned ${res.status} for chat ${stringChatId} (attempt ${attempt}): ${text.slice(0, 200)}`);
+              console.warn(`[Spaces] Callback returned ${result.status} for chat ${stringChatId} (attempt ${attempt}): ${result.text.slice(0, 200)}`);
             } catch (e) {
-              const cause = e.cause ? ` | cause: ${e.cause?.code || e.cause?.message || JSON.stringify(e.cause)}` : '';
-              console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}${cause}`);
+              console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}${e.cause}`);
             }
-            if (attempt < 4) await new Promise(r => setTimeout(r, delays[attempt - 1]));
+            if (attempt < 4) await new Promise(r => setTimeout(r, 3000));
           }
           console.error(`[Spaces] Callback failed for chat ${stringChatId}, short-poll will handle`);
         }
