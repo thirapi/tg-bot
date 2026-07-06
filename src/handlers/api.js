@@ -1,4 +1,4 @@
-import { updateTaskStatus, setMemory, deleteMemoriesByPrefix, getGHAContext, consumeGHAContext, getMemory, saveGHAContext, acquireChatLock, releaseChatLock } from "../db/index.js";
+import { updateTaskStatus, setMemory, deleteMemoriesByPrefix, getGHAContext, consumeGHAContext, getMemory, saveGHAContext, acquireChatLock, releaseChatLock, removePendingSpace } from "../db/index.js";
 
 const CALLBACK_TOKEN = "kokoa-runner-secret";
 
@@ -249,7 +249,7 @@ export async function handleAPI(request, env, ctx) {
 
         // Tandai callback sudah selesai + hapus pending key biar cron tidak duplicate
         await env.CHAT_HISTORY.put(`callback_done:${chatId}`, "1", { expirationTtl: 300 }).catch(() => {});
-        await env.CHAT_HISTORY.delete(`spaces_pending:${chatId}`).catch(() => {});
+        await removePendingSpace(env, chatId).catch(() => {});
 
         // Dequeue pending message if any
         const { processMessage } = await import("./message.js");

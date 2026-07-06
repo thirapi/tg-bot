@@ -1,4 +1,4 @@
-import { getHistory, getAllMemories, getTasks, addHistory, trimHistory } from "../db/index.js";
+import { getHistory, getAllMemories, getTasks, addHistory, trimHistory, addPendingSpace } from "../db/index.js";
 import { sendTelegramMessage } from "./telegram.js";
 import { markdownToRichHtml } from "../utils/formatter.js";
 import { MAX_HISTORY } from "../config.js";
@@ -43,17 +43,7 @@ export async function processViaSpaces(env, chatId, userPrompt, mediaData, histo
   const result = await response.json();
 
   if (result.status === "processing") {
-    // The HF Spaces server is running the loop asynchronously in the background.
-    // Save pending status so cron can poll for the result.
-    try {
-      await env.CHAT_HISTORY.put(
-        `spaces_pending:${chatId}`,
-        JSON.stringify({ timestamp: Date.now() }),
-        { expirationTtl: 3600 }
-      );
-    } catch (e) {
-      console.error("Failed to save spaces_pending to KV:", e.message);
-    }
+    await addPendingSpace(env, chatId);
     return { status: "processing" };
   }
 

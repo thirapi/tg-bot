@@ -390,3 +390,46 @@ export async function releaseChatLock(env, chatId) {
     console.error("releaseChatLock error:", e);
   }
 }
+
+export async function addPendingSpace(env, chatId) {
+  try {
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO spaces_pending (chat_id, created_at) VALUES (?, unixepoch())"
+    ).bind(chatId).run();
+  } catch (e) {
+    console.error("addPendingSpace error:", e);
+  }
+}
+
+export async function getPendingSpaces(env) {
+  try {
+    const { results } = await env.DB.prepare(
+      "SELECT chat_id FROM spaces_pending ORDER BY created_at ASC"
+    ).all();
+    return results || [];
+  } catch (e) {
+    console.error("getPendingSpaces error:", e);
+    return [];
+  }
+}
+
+export async function removePendingSpace(env, chatId) {
+  try {
+    await env.DB.prepare(
+      "DELETE FROM spaces_pending WHERE chat_id = ?"
+    ).bind(chatId).run();
+  } catch (e) {
+    console.error("removePendingSpace error:", e);
+  }
+}
+
+export async function cleanupExpiredPending(env, maxAgeSeconds = 3600) {
+  try {
+    const cutoff = Math.floor(Date.now() / 1000) - maxAgeSeconds;
+    await env.DB.prepare(
+      "DELETE FROM spaces_pending WHERE created_at < ?"
+    ).bind(cutoff).run();
+  } catch (e) {
+    console.error("cleanupExpiredPending error:", e);
+  }
+}

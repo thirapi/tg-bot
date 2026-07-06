@@ -66,3 +66,8 @@ CREATE TABLE IF NOT EXISTS chat_locks (
 
 CREATE INDEX IF NOT EXISTS idx_reminders_trigger
   ON reminders(trigger_at);
+
+CREATE TABLE IF NOT EXISTS spaces_pending (
+  chat_id TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);

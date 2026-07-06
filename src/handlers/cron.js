@@ -1,4 +1,4 @@
-import { getDueReminders, markReminderTriggered, addHistory, trimHistory, releaseChatLock } from "../db/index.js";
+import { getDueReminders, markReminderTriggered, addHistory, trimHistory, releaseChatLock, getPendingSpaces, removePendingSpace, cleanupExpiredPending } from "../db/index.js";
 import { sendTelegramMessage } from "../services/telegram.js";
 import { markdownToRichHtml } from "../utils/formatter.js";
 
@@ -6,11 +6,12 @@ async function pollSpacesResults(env, ctx) {
   if (!env.HF_SPACES_URL) return;
 
   try {
-    const { keys } = await env.CHAT_HISTORY.list({ prefix: 'spaces_pending:' });
-    if (keys.length === 0) return;
+    await cleanupExpiredPending(env, 3600);
+    const pending = await getPendingSpaces(env);
+    if (pending.length === 0) return;
 
-    for (const keyMeta of keys) {
-      const chatId = keyMeta.name.replace('spaces_pending:', '');
+    for (const row of pending) {
+      const chatId = row.chat_id;
       try {
         const res = await fetch(`${env.HF_SPACES_URL}/api/result/${chatId}`, {
           signal: AbortSignal.timeout(15000),
@@ -39,7 +40,7 @@ async function pollSpacesResults(env, ctx) {
             await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(errProgressId)).catch(() => {});
             await env.CHAT_HISTORY.delete(errProgressKey).catch(() => {});
           }
-          await env.CHAT_HISTORY.delete(keyMeta.name);
+          await removePendingSpace(env, chatId);
           await releaseChatLock(env, chatId);
           continue;
         }
@@ -90,8 +91,7 @@ async function pollSpacesResults(env, ctx) {
           );
         }
 
-        // Clean up
-        await env.CHAT_HISTORY.delete(keyMeta.name);
+        await removePendingSpace(env, chatId);
 
         // Delete progress message — priority dari result body (direct pass, no KV)
         let progressMsgId = data.progressMsgId;

@@ -157,6 +157,39 @@ const server = createServer(async (req, res) => {
         if (workerUrl) {
           proxyEnv.WORKER_URL = workerUrl;
         }
+
+        async function sendCallback(body) {
+          const url = `${workerUrl}/api/spaces-callback`;
+          const MAX_ATTEMPTS = 3;
+          const delays = [1000, 3000, 5000];
+          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+              const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer kokoa-runner-secret',
+                  'User-Agent': 'KokoaBot/1.0',
+                },
+                body: JSON.stringify(body),
+                signal: AbortSignal.timeout(15000),
+              });
+              if (res.ok) {
+                console.log(`[Spaces] HTTPS callback success for chat ${stringChatId} (attempt ${attempt})`);
+                resultsStore.delete(stringChatId);
+                return;
+              }
+              console.warn(`[Spaces] Callback returned ${res.status} for chat ${stringChatId} (attempt ${attempt})`);
+            } catch (e) {
+              console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}`);
+            }
+            if (attempt < MAX_ATTEMPTS) {
+              await new Promise(r => setTimeout(r, delays[attempt - 1]));
+            }
+          }
+          console.error(`[Spaces] All ${MAX_ATTEMPTS} callback attempts failed for chat ${stringChatId}, cron will handle`);
+        }
+
         try {
           const originalHistoryLength = rawContents ? rawContents.length - 1 : 0;
           const currentContents = rawContents || [{ role: 'user', parts: [{ text: userPrompt || '' }] }];
@@ -216,20 +249,11 @@ const server = createServer(async (req, res) => {
           });
           console.log(`[Spaces] Result stored for chat ${stringChatId}`);
 
-          // Fast-path: coba HTTPS callback (port 443 mungkin tidak diblokir untuk IP Worker-mu)
           if (workerUrl) {
-            const callbackUrl = `${workerUrl}/api/spaces-callback`;
-            fetch(callbackUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer kokoa-runner-secret' },
-              body: JSON.stringify({ chatId: stringChatId, newContents: newContent, finalText, isFinal: true, maxHistory: 15, progressMsgId }),
-              signal: AbortSignal.timeout(5000),
-            }).then(r => {
-              if (r.ok) {
-                console.log(`[Spaces] HTTPS callback success for chat ${stringChatId}`);
-                resultsStore.delete(stringChatId);
-              }
-            }).catch(e => console.log(`[Spaces] HTTPS callback failed (cron fallback): ${e.message}`));
+            sendCallback({
+              chatId: stringChatId, newContents: newContent, finalText,
+              isFinal: true, maxHistory: 15, progressMsgId,
+            });
           }
 
         } catch (err) {
@@ -247,15 +271,12 @@ const server = createServer(async (req, res) => {
           console.log(`[Spaces] Error result stored for chat ${stringChatId}`);
 
           if (workerUrl) {
-            const callbackUrl = `${workerUrl}/api/spaces-callback`;
-            fetch(callbackUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer kokoa-runner-secret' },
-              body: JSON.stringify({ chatId: stringChatId, error: `yah eror pas jalanin di server: ${errorMsg}. coba kirim lagi ya!`, isFinal: true, progressMsgId }),
-              signal: AbortSignal.timeout(5000),
-            }).then(r => {
-              if (r.ok) resultsStore.delete(stringChatId);
-            }).catch(e => console.log(`[Spaces] Error HTTPS callback failed: ${e.message}`));
+            sendCallback({
+              chatId: stringChatId,
+              error: `yah eror pas jalanin di server: ${errorMsg}. coba kirim lagi ya!`,
+              isFinal: true,
+              progressMsgId,
+            });
           }
 
         } finally {
