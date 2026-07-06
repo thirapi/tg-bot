@@ -1,5 +1,7 @@
 import { createServer } from 'http';
+import https from 'https';
 import { execSync } from 'child_process';
+import { resolve6 } from 'dns/promises';
 import { runAgentLoop, buildProviderConfigs } from './handlers/message.js';
 import { executeTool } from './tools/executor.js';
 import { executeSpacesTool, isSpacesTool } from './tools/spaces-executor.js';
@@ -159,39 +161,63 @@ const server = createServer(async (req, res) => {
         }
 
         async function sendCallback(body) {
-          const baseUrl = workerUrl.replace(/\/+$/, '') + '/api/spaces-callback';
-          const MAX_ATTEMPTS = 3;
-          const delays = [2000, 5000, 10000];
-          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+          const hostname = new URL(workerUrl).hostname;
+          const path = '/api/spaces-callback';
+          const bodyStr = JSON.stringify(body);
+          let ipv6 = null;
+
+          try {
+            const addrs = await resolve6(hostname);
+            ipv6 = addrs[0];
+            console.log(`[Spaces] Resolved IPv6 for ${hostname}: ${ipv6}`);
+          } catch (e) {
+            console.warn(`[Spaces] No IPv6 for ${hostname}, skipping callback: ${e.message}`);
+            return; // no IPv6, cron will handle
+          }
+
+          for (let attempt = 1; attempt <= 2; attempt++) {
             try {
-              // Cache buster + Connection:close to force fresh TCP/TLS per attempt
-              const url = baseUrl + '?_=' + Date.now() + '_' + attempt;
-              const res = await fetch(url, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': 'Bearer kokoa-runner-secret',
-                  'User-Agent': 'KokoaBot/1.0',
-                  'Connection': 'close',
-                },
-                body: JSON.stringify(body),
-                signal: AbortSignal.timeout(20000),
+              const result = await new Promise((resolve, reject) => {
+                const req = https.request({
+                  host: ipv6,
+                  port: 443,
+                  path: path + '?_=' + Date.now() + '_' + attempt,
+                  method: 'POST',
+                  servername: hostname,
+                  family: 6,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(bodyStr),
+                    'Authorization': 'Bearer kokoa-runner-secret',
+                    'User-Agent': 'KokoaBot/1.0',
+                    'Connection': 'close',
+                    'Host': hostname,
+                  },
+                  timeout: 15000,
+                  rejectUnauthorized: true,
+                }, (res) => {
+                  let data = '';
+                  res.on('data', c => data += c);
+                  res.on('end', () => resolve({ ok: res.statusCode === 200, status: res.statusCode, text: data }));
+                });
+                req.on('error', reject);
+                req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+                req.write(bodyStr);
+                req.end();
               });
-              const bodyText = await res.text().catch(() => '');
-              if (res.ok) {
-                console.log(`[Spaces] HTTPS callback success for chat ${stringChatId} (attempt ${attempt})`);
+
+              if (result.ok) {
+                console.log(`[Spaces] IPv6 callback success for chat ${stringChatId} (attempt ${attempt})`);
                 resultsStore.delete(stringChatId);
                 return;
               }
-              console.warn(`[Spaces] Callback returned ${res.status} for chat ${stringChatId} (attempt ${attempt}): ${bodyText.slice(0, 200)}`);
+              console.warn(`[Spaces] IPv6 callback returned ${result.status} for chat ${stringChatId} (attempt ${attempt}): ${result.text.slice(0, 200)}`);
             } catch (e) {
-              console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}`, e.cause || e.stack?.split('\n').slice(0, 3).join(' ') || '');
+              console.warn(`[Spaces] IPv6 callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}`);
             }
-            if (attempt < MAX_ATTEMPTS) {
-              await new Promise(r => setTimeout(r, delays[attempt - 1]));
-            }
+            if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
           }
-          console.error(`[Spaces] All ${MAX_ATTEMPTS} callback attempts failed for chat ${stringChatId}, cron will handle`);
+          console.error(`[Spaces] IPv6 callback failed for chat ${stringChatId}, cron will handle`);
         }
 
         try {
