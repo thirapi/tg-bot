@@ -4,6 +4,7 @@ import { execSync } from 'child_process';
 import { runAgentLoop, buildProviderConfigs } from './handlers/message.js';
 import { executeTool } from './tools/executor.js';
 import { executeSpacesTool, isSpacesTool } from './tools/spaces-executor.js';
+import { SPACES_HEARTBEAT_INTERVAL } from './config.js';
 
 async function hybridExecutor(name, args, env, chatId) {
   if (isSpacesTool(name)) {
@@ -33,6 +34,21 @@ setInterval(() => {
 }, 60000);
 // Track ongoing chat processes to avoid duplicate execution on the same workspace
 const activeChats = new Set();
+
+let lastWorkerUrl = null;
+let heartbeatInterval = null;
+function startHeartbeat(url) {
+  if (heartbeatInterval) return;
+  console.log(`[Heartbeat] Starting keep-warm pings to ${url} every ${SPACES_HEARTBEAT_INTERVAL}ms`);
+  heartbeatInterval = setInterval(async () => {
+    try {
+      const res = await fetch(`${url}/api/health?_=${Date.now()}`, { method: 'GET', signal: AbortSignal.timeout(5000) });
+      if (!res.ok) console.warn(`[Heartbeat] Ping failed: ${res.status}`);
+    } catch (e) {
+      console.warn(`[Heartbeat] Ping error: ${e.message}`);
+    }
+  }, SPACES_HEARTBEAT_INTERVAL);
+}
 
 function parseBody(req) {
   return new Promise((resolve, reject) => {
@@ -128,12 +144,18 @@ const server = createServer(async (req, res) => {
   if (url.pathname === '/api/process' && req.method === 'POST') {
     try {
       const body = await parseBody(req);
-      const { chatId, userPrompt, currentContents: rawContents, memories, tasks, workerUrl, progressMsgId } = body;
+      const { chatId, userPrompt, currentContents: rawContents, memories, tasks, workerUrl: reqWorkerUrl, progressMsgId } = body;
 
       if (!chatId) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Missing chatId' }));
         return;
+      }
+
+      // Keep connection warm by storing worker url and starting heartbeat
+      if (reqWorkerUrl) {
+        lastWorkerUrl = reqWorkerUrl;
+        startHeartbeat(reqWorkerUrl);
       }
 
       const stringChatId = String(chatId);
@@ -155,12 +177,12 @@ const server = createServer(async (req, res) => {
 
       (async () => {
         const proxyEnv = buildProxyEnv(process.env);
-        if (workerUrl) {
-          proxyEnv.WORKER_URL = workerUrl;
+        if (lastWorkerUrl) {
+          proxyEnv.WORKER_URL = lastWorkerUrl;
         }
 
         async function sendCallback(body) {
-          const url = new URL(`${workerUrl}/api/spaces-callback`);
+          const url = new URL(`${lastWorkerUrl}/api/spaces-callback`);
           const bodyStr = JSON.stringify(body);
           for (let attempt = 1; attempt <= 4; attempt++) {
             try {
@@ -265,7 +287,7 @@ const server = createServer(async (req, res) => {
           });
           console.log(`[Spaces] Result stored for chat ${stringChatId}`);
 
-          if (workerUrl) {
+          if (lastWorkerUrl) {
             sendCallback({
               chatId: stringChatId, newContents: newContent, finalText,
               isFinal: true, maxHistory: 15, progressMsgId,
@@ -286,7 +308,7 @@ const server = createServer(async (req, res) => {
           });
           console.log(`[Spaces] Error result stored for chat ${stringChatId}`);
 
-          if (workerUrl) {
+          if (lastWorkerUrl) {
             sendCallback({
               chatId: stringChatId,
               error: `yah eror pas jalanin di server: ${errorMsg}. coba kirim lagi ya!`,

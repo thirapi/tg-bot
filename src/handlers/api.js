@@ -312,5 +312,11 @@ export async function handleAPI(request, env, ctx) {
     }
   }
 
+  if (path === "/api/health") {
+    return new Response(JSON.stringify({ status: "ok", ts: Date.now() }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   return new Response("Not Found", { status: 404 });
 }
