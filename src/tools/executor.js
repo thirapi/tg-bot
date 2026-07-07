@@ -50,22 +50,33 @@ export async function executeTool(name, args, env, chatId) {
     case "createOrUpdateFile": {
       const endpoint = `repos/${args.owner}/${args.repo}/contents/${args.path}`;
       let sha = args.sha;
-      if (!sha) {
+      const refParam = args.branch ? `?ref=${args.branch}` : '';
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (!sha) {
+          try {
+            const existing = await callGitHubAPI(env, endpoint + refParam);
+            if (existing && existing.sha) sha = existing.sha;
+          } catch (_) {}
+        }
+        const bytes = new TextEncoder().encode(args.content);
+        const base64Content = bufferToBase64(bytes);
+        const body = {
+          message: args.message,
+          content: base64Content,
+        };
+        if (sha) body.sha = sha;
+        if (args.branch) body.branch = args.branch;
         try {
-          const refParam = args.branch ? `?ref=${args.branch}` : '';
-          const existing = await callGitHubAPI(env, endpoint + refParam);
-          if (existing && existing.sha) sha = existing.sha;
-        } catch (_) {}
+          return await callGitHubAPI(env, endpoint, "PUT", body);
+        } catch (err) {
+          const is409 = err.message.includes("409") || err.message.includes('does not match');
+          if (is409 && attempt < 2) {
+            sha = null;
+            continue;
+          }
+          throw err;
+        }
       }
-      const bytes = new TextEncoder().encode(args.content);
-      const base64Content = bufferToBase64(bytes);
-      const body = {
-        message: args.message,
-        content: base64Content,
-      };
-      if (sha) body.sha = sha;
-      if (args.branch) body.branch = args.branch;
-      return callGitHubAPI(env, endpoint, "PUT", body);
     }
     case "createPullRequest": {
       const endpoint = `repos/${args.owner}/${args.repo}/pulls`;
@@ -194,6 +205,7 @@ export async function executeTool(name, args, env, chatId) {
       return await webFetch(args.url);
     }
     case "createTaskPlan": {
+      await clearTasks(env, chatId).catch(() => {});
       const tasks = (args.steps || []).map((step, i) => ({
         title: step,
         description: `Langkah ${i + 1}: ${step}`,

@@ -107,6 +107,14 @@ function buildProxyEnv(envVars) {
       },
       delete: async (key) => inMemoryKV.delete(key),
     },
+    DB: {
+      prepare: () => ({
+        bind: () => ({
+          run: async () => {},
+          first: async () => null,
+        }),
+      }),
+    },
   };
   return proxyEnv;
 }

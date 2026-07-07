@@ -1,6 +1,6 @@
 import { execSync } from "child_process";
 import { readFileSync, readdirSync, statSync } from "fs";
-import { join } from "path";
+import { join, isAbsolute } from "path";
 
 const SPACES_TOOL_NAMES = new Set([
   "cloneRepo", "readLocalFile", "listLocalDir", "grepLocalFiles", "runCommand",
@@ -8,6 +8,13 @@ const SPACES_TOOL_NAMES = new Set([
 
 function isSpacesTool(name) {
   return SPACES_TOOL_NAMES.has(name);
+}
+
+function resolvePath(inputPath, workspace) {
+  if (!inputPath) return workspace;
+  if (isAbsolute(inputPath)) return inputPath;
+  if (workspace && !inputPath.startsWith("/")) return join(workspace, inputPath);
+  return inputPath;
 }
 
 async function executeSpacesTool(name, args, env, chatId) {
@@ -28,13 +35,13 @@ async function executeSpacesTool(name, args, env, chatId) {
       return { workspace: targetDir, message: `Repo ${args.repo} berhasil di-clone ke ${targetDir}` };
     }
     case "readLocalFile": {
-      const filePath = args.path || env.__WORKSPACE;
+      const filePath = resolvePath(args.path, env.__WORKSPACE);
       if (!filePath) throw new Error("Path tidak ditentukan dan tidak ada workspace aktif.");
       const content = readFileSync(filePath, "utf-8");
       return { path: filePath, size: content.length, content };
     }
     case "listLocalDir": {
-      const dirPath = args.path || env.__WORKSPACE;
+      const dirPath = resolvePath(args.path, env.__WORKSPACE);
       if (!dirPath) throw new Error("Path tidak ditentukan dan tidak ada workspace aktif.");
       const entries = readdirSync(dirPath);
       const details = entries.map(e => {
@@ -47,7 +54,7 @@ async function executeSpacesTool(name, args, env, chatId) {
       return { path: dirPath, entries: details };
     }
     case "grepLocalFiles": {
-      const searchPath = args.path || env.__WORKSPACE;
+      const searchPath = resolvePath(args.path, env.__WORKSPACE);
       if (!searchPath) throw new Error("Path tidak ditentukan dan tidak ada workspace aktif.");
       let cmd = `grep -rn '${args.pattern.replace(/'/g, "'\\''")}' "${searchPath}"`;
       if (args.include) cmd += ` --include="${args.include}"`;
@@ -62,7 +69,7 @@ async function executeSpacesTool(name, args, env, chatId) {
       }
     }
     case "runCommand": {
-      const cwd = args.cwd || env.__WORKSPACE;
+      const cwd = resolvePath(args.cwd, env.__WORKSPACE);
       if (!cwd) throw new Error("cwd tidak ditentukan dan tidak ada workspace aktif.");
       const timeoutSec = Math.min(args.timeout || 30, 120);
       try {
