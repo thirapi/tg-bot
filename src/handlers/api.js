@@ -187,6 +187,16 @@ export async function handleAPI(request, env, ctx) {
         return new Response("Missing chatId", { status: 400 });
       }
 
+      // Mutex guard: kalo short-poll/cron udah handle result ini, skip semua
+      if (isFinal) {
+        const mutexKey = `hdl:${chatId}`;
+        if (await env.CHAT_HISTORY.get(mutexKey)) {
+          console.log(`[Callback] Chat ${chatId} already handled, skipping callback entirely`);
+          return new Response("OK", { status: 200 });
+        }
+        await env.CHAT_HISTORY.put(mutexKey, "1", { expirationTtl: 120 });
+      }
+
       // Handle Telegram action (e.g., typing)
       if (action) {
         const { sendTelegramAction } = await import("../services/telegram.js");
@@ -207,34 +217,12 @@ export async function handleAPI(request, env, ctx) {
         }
       }
 
-      // Handle Telegram final text response
+      // Handle Telegram final text response + delete progress message
       if (finalText) {
-        const { sendTelegramMessage } = await import("../services/telegram.js");
+        const { sendTelegramMessage, deleteTelegramMessage } = await import("../services/telegram.js");
         const { markdownToRichHtml } = await import("../utils/formatter.js");
-        const richHtml = markdownToRichHtml(finalText);
-        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml).catch(e =>
-          console.error("Failed to send finalText on callback:", e)
-        );
-      }
 
-      // Handle Telegram error response
-      if (error) {
-        const { sendTelegramMessage } = await import("../services/telegram.js");
-        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, error).catch(e =>
-          console.error("Failed to send error on callback:", e)
-        );
-      }
-
-      // Handle final cleanup (delete progress loading message & release lock)
-      if (isFinal) {
-        const mutexKey = `hdl:${chatId}`;
-        if (await env.CHAT_HISTORY.get(mutexKey)) {
-          console.log(`[Callback] Chat ${chatId} already handled, skipping callback finalize`);
-          return new Response("OK", { status: 200 });
-        }
-        await env.CHAT_HISTORY.put(mutexKey, "1", { expirationTtl: 120 });
-
-        // progressMsgId dari body callback (direct pass, no KV)
+        // Edit progress message jadi response final (atau delete kalo gagal)
         let progressMsgId = body.progressMsgId;
         if (!progressMsgId) {
           for (let i = 0; i < 5; i++) {
@@ -244,13 +232,50 @@ export async function handleAPI(request, env, ctx) {
           }
         }
         if (progressMsgId) {
-          const { deleteTelegramMessage } = await import("../services/telegram.js");
-          await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(progressMsgId)).catch(e =>
-            console.error("Failed to delete progress message:", e)
+          const { editTelegramMessage } = await import("../services/telegram.js");
+          const richHtml = markdownToRichHtml(finalText);
+          await editTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(progressMsgId), richHtml).catch(() => {
+            // Fallback: kalo edit gagal, kirim baru + hapus progress
+            sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml).catch(() => {});
+            deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(progressMsgId)).catch(() => {});
+          });
+        } else {
+          const richHtml = markdownToRichHtml(finalText);
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml).catch(e =>
+            console.error("Failed to send finalText on callback:", e)
           );
-          await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
         }
+        await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
+      }
 
+      // Handle Telegram error response (edit progress message jadi error)
+      if (error) {
+        let progressMsgId = body.progressMsgId;
+        if (!progressMsgId) {
+          for (let i = 0; i < 5; i++) {
+            progressMsgId = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
+            if (progressMsgId) break;
+            await new Promise(r => setTimeout(r, 300));
+          }
+        }
+        if (progressMsgId) {
+          const { editTelegramMessage } = await import("../services/telegram.js");
+          const errHtml = `<b>Error:</b> ${error}`;
+          await editTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(progressMsgId), errHtml).catch(() => {
+            const { sendTelegramMessage } = await import("../services/telegram.js");
+            sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, error).catch(() => {});
+          });
+        } else {
+          const { sendTelegramMessage } = await import("../services/telegram.js");
+          await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, error).catch(e =>
+            console.error("Failed to send error on callback:", e)
+          );
+        }
+        await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
+      }
+
+      // Handle final cleanup (release lock, history dequeue dll)
+      if (isFinal) {
         console.log(`Releasing D1 lock for chat: ${chatId} (spaces-callback)`);
         await releaseChatLock(env, chatId);
 
