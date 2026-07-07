@@ -257,10 +257,10 @@ Perbedaan arsitektur:
 
 | Aspek | HuggingClaw | Kita (tg-bot) |
 |-------|-------------|---------------|
-| **Arah komunikasi utama** | Space → Worker (Space initiate semua outbound via proxy) | Worker → Spaces (submit task), Spaces → Worker (callback result) |
+| **Arah komunikasi utama** | Space → Worker (Space initiate semua outbound via proxy) | Worker → Spaces (submit task), Spaces → Worker via proxy (response via telegram-proxy, callback simpan history) |
 | **Masalah utama** | Outbound HTTP dari Space diblokir HF | **Callback** dari Space ke Worker diblokir HF NAT |
-| **Solusi** | Route SEMUA traffic melalui Cloudflare Worker proxy | ~~Persistent keepAlive + heartbeat~~ (GAGAL, lihat 5.8.4). Short-poll sebagai primary |
-| **Telegram API access** | Via Cloudflare Worker proxy | Langsung dari Worker (Worker → Telegram works) |
+| **Solusi** | Route SEMUA traffic melalui Cloudflare Worker proxy | **Hybrid:** proxy pattern untuk Telegram response, callback untuk history save + lock release, short-poll sebagai fallback |
+| **Telegram API access** | Via Cloudflare Worker proxy | Via Cloudflare Worker proxy (Spaces kirim ke Worker `/api/telegram-proxy/{method}`, Worker teruskan ke Telegram API) |
 
 **Detail proxy HuggingClaw:**
 - `cloudflare-proxy.js` di-load via `NODE_OPTIONS="--require"` — jalan sebelum kode apapun
@@ -336,17 +336,53 @@ Heartbeat 5 detik dari Spaces → Worker menggunakan agent keepAlive **terbukti 
 #### 5.8.6 Kesimpulan untuk Arsitektur (Revisi)
 
 | Pendekatan | Cara Kerja | Status |
-|---|---|---|
+|---|---|---|---|
 | HuggingClaw: forward proxy via Cloudflare Worker | Fresh connections, no keepAlive, proxy all traffic | ✅ Works (berdasarkan repo dan user reports) |
 | n8n: persistent connection (inferred) | Belum diverifikasi | ? |
 | **Kita: keepAlive + heartbeat + destroy on error** | Satu koneksi persistent + ping 5s + cleanup | ❌ **GAGAL** (lihat seksi 5.8.4) |
-| **Kita: short-poll sebagai primary** | Worker polling Spaces via inbound HTTP | ✅ **Works** (~13 detik latency) |
+| **Kita: hybrid proxy pattern** (sekarang) | Spaces kirim Telegram response via Worker proxy (`/api/telegram-proxy/{method}`), callback hanya untuk history save + lock release. Short-poll sebagai fallback jika callback gagal. Fresh connections, no keepAlive. | ✅ **Works** |
+
+### 5.8.7 Arsitektur Hybrid (Adopsi dari HuggingClaw)
+
+```
+Telegram → Worker → Spaces (POST /api/process)
+                     ├── Respond {status: "processing"} immediately
+                     ├── Proses AI + tools di background
+                     ├── Kirim response ke Telegram via Worker proxy
+                     │   └── fresh POST /api/telegram-proxy/sendMessage → Worker → Telegram API
+                     ├── Hapus progress message via Worker proxy
+                     │   └── fresh POST /api/telegram-proxy/deleteMessage → Worker → Telegram API
+                     └── Callback ke Worker untuk history save + lock release
+                         └── POST /api/spaces-callback (best-effort, short-poll fallback)
+
+Proxy pattern (Spaces→Worker→Telegram):
+  - Spaces buka fresh connection ke Worker → Worker teruskan ke Telegram API
+  - Tidak perlu keepAlive — setiap request independent
+  - NAT treat sebagai "first connection" karena interval antar request cukup panjang
+
+Callback pattern (Spaces→Worker):
+  - Hanya untuk non-critical: simpan history ke D1, release lock, dequeue
+  - Best-effort — jika gagal, short-poll tetap deliver response
+  - Tidak perlu progressMsgId — progress message dihapus langsung via proxy
+
+Short-poll fallback (Worker→Spaces):
+  - Worker polling Spaces setiap 10s setelah submit task
+  - Jika callback gagal/spaces lambat, short-poll deliver response
+  - Primary reliable path — proxy/callback hanya optimasi
+
+Dedup mechanism (mencegah duplikasi dan race condition):
+  - `proxySent` flag di result data → short-poll skip send jika proxy sukses
+  - `history_saved` KV (TTL 300s) → cegah duplikasi history jika callback & short-poll sama-sama save
+  - `callback_done` KV (TTL 300s) → cron skip jika short-poll/callback sudah selesai
+  - `hdl` mutex (TTL 120s) → cegah eksekusi concurrent `handleSpacesResult`
+```
 
 Kunci pelajaran:
 1. **KeepAlive + destroy on error = GAGAL** — bikin NAT TIME_WAIT stuck
-2. **Fresh connections** (tanpa keepAlive) dengan interval >60 detik works — setiap koneksi dianggap "first connection"
-3. **Short-poll** (Worker → Spaces, inbound) lebih reliable dari callback (Spaces → Worker, outbound)
-4. **Arah komunikasi penting:** inbound ke Spaces selalu works, outbound dari Spaces intermittent
+2. **Fresh connections** (tanpa keepAlive) dengan interval cukup panjang works — setiap koneksi dianggap "first connection"
+3. **Proxy pattern** mengubah arah komunikasi: Spaces tidak perlu langsung ke Telegram API, cukup ke Worker yang teruskan
+4. **Short-poll** (Worker → Spaces, inbound) tetap primary reliable path
+5. **Callback** hanya untuk non-critical (history save, lock release) — jika gagal, tidak ada data loss
 
 ---
 

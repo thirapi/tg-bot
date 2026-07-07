@@ -174,7 +174,42 @@ const server = createServer(async (req, res) => {
           proxyEnv.WORKER_URL = lastWorkerUrl;
         }
 
-          async function sendCallback(body) {
+        async function proxyTelegram(method, body) {
+          const url = new URL(`${lastWorkerUrl}/api/telegram-proxy/${method}`);
+          const bodyStr = JSON.stringify(body);
+          for (let attempt = 1; attempt <= 2; attempt++) {
+            try {
+              const result = await new Promise((resolve, reject) => {
+                const req = https.request({
+                  hostname: url.hostname,
+                  path: url.pathname + url.search + `?_=${Date.now()}`,
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer kokoa-runner-secret',
+                    'Content-Length': Buffer.byteLength(bodyStr),
+                  },
+                  timeout: 15000,
+                }, (res) => {
+                  let data = '';
+                  res.on('data', c => data += c);
+                  res.on('end', () => {
+                    try { resolve(JSON.parse(data)); } catch { resolve({ ok: false }); }
+                  });
+                });
+                req.on('error', () => reject());
+                req.on('timeout', () => { req.destroy(); reject(); });
+                req.write(bodyStr);
+                req.end();
+              });
+              if (result?.ok) return result;
+            } catch {}
+            if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
+          }
+          return null;
+        }
+
+        async function sendCallback(body) {
           const url = new URL(`${lastWorkerUrl}/api/spaces-callback`);
           const bodyStr = JSON.stringify(body);
           for (let attempt = 1; attempt <= 3; attempt++) {
@@ -209,7 +244,7 @@ const server = createServer(async (req, res) => {
               if (result.ok) {
                 console.log(`[Spaces] Callback success for chat ${stringChatId} (attempt ${attempt})`);
                 resultsStore.delete(stringChatId);
-                return;
+                return true;
               }
               console.warn(`[Spaces] Callback returned ${result.status} for chat ${stringChatId} (attempt ${attempt}): ${result.text.slice(0, 200)}`);
             } catch (e) {
@@ -218,6 +253,7 @@ const server = createServer(async (req, res) => {
             if (attempt < 3) await new Promise(r => setTimeout(r, 3000));
           }
           console.error(`[Spaces] Callback failed for chat ${stringChatId}, short-poll will handle`);
+          return false;
         }
 
         try {
@@ -273,45 +309,88 @@ const server = createServer(async (req, res) => {
             finalText = result.finalText || "tugasnya udah aku jalanin ya! tp aku ga dapet respons teks penutup dr sistem. coba cek repo kamu deh, harusnya kodenya udh ke-update";
           }
 
-          resultsStore.set(stringChatId, {
+          const resultEntry = {
             status: 'complete',
             finalText,
             newContent,
             escalationTriggered: result.escalationTriggered,
             error: null,
+            proxySent: false,
             progressMsgId: progressMsgId || null,
             ts: Date.now()
-          });
+          };
+          resultsStore.set(stringChatId, resultEntry);
           console.log(`[Spaces] Result stored for chat ${stringChatId}`);
 
           if (lastWorkerUrl) {
+            // Send response via proxy (fresh connection, no keepAlive)
+            const proxyOk = finalText ? await (async () => {
+              const { markdownToRichHtml } = await import("./utils/formatter.js");
+              const richHtml = markdownToRichHtml(finalText);
+              const r = await proxyTelegram("sendMessage", {
+                chat_id: Number(stringChatId), text: richHtml, parse_mode: "HTML",
+              });
+              return r?.ok === true;
+            })() : false;
+
+            // Delete progress message via proxy
+            if (progressMsgId) {
+              await proxyTelegram("deleteMessage", {
+                chat_id: Number(stringChatId), message_id: parseInt(progressMsgId),
+              });
+            }
+
+            // Mark proxySent in stored result so short-poll doesn't re-send
+            if (proxyOk) {
+              const existing = resultsStore.get(stringChatId);
+              if (existing) { existing.proxySent = true; }
+            }
+
+            // Callback for history save + lock release (non-critical)
             sendCallback({
-              chatId: stringChatId, newContents: newContent, finalText,
-              isFinal: true, maxHistory: 15, progressMsgId,
+              chatId: stringChatId, newContents: newContent,
+              isFinal: true, maxHistory: 15,
             });
           }
 
         } catch (err) {
           console.error('[Spaces] Async agent loop error:', err);
           const errorMsg = err.message;
-          resultsStore.set(stringChatId, {
+          const errorResult = {
             status: 'complete',
             finalText: null,
             newContent: [],
             escalationTriggered: false,
             error: errorMsg,
+            proxySent: false,
             progressMsgId: progressMsgId || null,
             ts: Date.now()
-          });
+          };
+          resultsStore.set(stringChatId, errorResult);
           console.log(`[Spaces] Error result stored for chat ${stringChatId}`);
 
           if (lastWorkerUrl) {
-            sendCallback({
-              chatId: stringChatId,
-              error: `yah eror pas jalanin di server: ${errorMsg}. coba kirim lagi ya!`,
-              isFinal: true,
-              progressMsgId,
+            // Send error via proxy
+            const proxyOk = await proxyTelegram("sendMessage", {
+              chat_id: Number(stringChatId),
+              text: `yah eror pas jalanin di server: ${errorMsg}. coba kirim lagi ya!`,
             });
+
+            // Delete progress message via proxy
+            if (progressMsgId) {
+              await proxyTelegram("deleteMessage", {
+                chat_id: Number(stringChatId), message_id: parseInt(progressMsgId),
+              });
+            }
+
+            // Mark proxySent in stored result
+            if (proxyOk?.ok === true) {
+              const existing = resultsStore.get(stringChatId);
+              if (existing) { existing.proxySent = true; }
+            }
+
+            // Callback for cleanup (non-critical)
+            sendCallback({ chatId: stringChatId, isFinal: true });
           }
 
         } finally {

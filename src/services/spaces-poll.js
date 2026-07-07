@@ -1,4 +1,4 @@
-import { SPACES_POLL_INTERVAL, SPACES_POLL_MAX_ATTEMPTS } from "../config.js";
+
 
 export async function handleSpacesResult(env, chatId, data, progressMsgId) {
   const { addHistory, trimHistory, removePendingSpace, releaseChatLock } = await import("../db/index.js");
@@ -6,44 +6,56 @@ export async function handleSpacesResult(env, chatId, data, progressMsgId) {
   const { markdownToRichHtml } = await import("../utils/formatter.js");
 
   console.log(`[SpacesResult] Result ready for chat ${chatId}`);
-  console.log(`[SpacesResult] chatId=${chatId} newContent=${data.newContent?.length} finalText=${data.finalText?.slice(0,30)}`);
+  console.log(`[SpacesResult] chatId=${chatId} newContent=${data.newContent?.length} finalText=${data.finalText?.slice(0,30)} proxySent=${data.proxySent}`);
 
-  try {
-    if (data.newContent && data.newContent.length > 0) {
-      const cleaned = data.newContent.map(c => ({
-        role: c.role,
-        parts: c.parts.map(p => {
-          if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
-          const cp = {};
-          if (p.text !== undefined) cp.text = p.text;
-          if (Object.keys(cp).length > 0) return cp;
-          if (p.functionCall) return { text: `[FunctionCall: ${p.functionCall.name}]` };
-          if (p.functionResponse) return { text: `[FunctionResponse: ${p.functionResponse.name}]` };
-          return { text: '' };
-        }).filter(p => p.text || Object.keys(p).length > 0)
-      }));
-      await addHistory(env, chatId, cleaned);
-      await trimHistory(env, chatId, 15);
-    }
-    console.log(`[SpacesResult] Step1: addHistory done for ${chatId}`);
-  } catch (e) { console.error(`[SpacesResult] Step1 FAIL (addHistory):`, e.message); }
+  const historySaved = await env.CHAT_HISTORY.get(`history_saved:${chatId}`).catch(() => null);
 
-  try {
-    if (data.escalationTriggered) {
-      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId,
-        "tugas ini butuh akses sistem yang lebih dalam. aku kerjakan di GitHub Actions ya...");
-    } else if (data.finalText) {
-      const richHtml = markdownToRichHtml(data.finalText);
-      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml);
-    } else if (data.error) {
-      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId,
-        `yah eror pas jalanin di server: ${data.error}. coba kirim lagi ya!`);
-    } else {
-      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId,
-        "tugasnya udah aku jalanin ya! tp aku ga dapet respons teks penutup dr sistem. coba cek repo kamu deh, harusnya kodenya udh ke-update");
-    }
-    console.log(`[SpacesResult] Step2: sendTelegram done for ${chatId}`);
-  } catch (e) { console.error(`[SpacesResult] Step2 FAIL (sendTelegram):`, e.message); }
+  if (!historySaved) {
+    try {
+      if (data.newContent && data.newContent.length > 0) {
+        const cleaned = data.newContent.map(c => ({
+          role: c.role,
+          parts: c.parts.map(p => {
+            if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
+            const cp = {};
+            if (p.text !== undefined) cp.text = p.text;
+            if (Object.keys(cp).length > 0) return cp;
+            if (p.functionCall) return { text: `[FunctionCall: ${p.functionCall.name}]` };
+            if (p.functionResponse) return { text: `[FunctionResponse: ${p.functionResponse.name}]` };
+            return { text: '' };
+          }).filter(p => p.text || Object.keys(p).length > 0)
+        }));
+        await addHistory(env, chatId, cleaned);
+        await trimHistory(env, chatId, 15);
+      }
+      await env.CHAT_HISTORY.put(`history_saved:${chatId}`, "1", { expirationTtl: 300 }).catch(() => {});
+      console.log(`[SpacesResult] Step1: addHistory done for ${chatId}`);
+    } catch (e) { console.error(`[SpacesResult] Step1 FAIL (addHistory):`, e.message); }
+  } else {
+    console.log(`[SpacesResult] Step1: addHistory skipped (already saved by callback) for ${chatId}`);
+  }
+
+  // Skip sending if proxy already sent the message
+  if (!data.proxySent) {
+    try {
+      if (data.escalationTriggered) {
+        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId,
+          "tugas ini butuh akses sistem yang lebih dalam. aku kerjakan di GitHub Actions ya...");
+      } else if (data.finalText) {
+        const richHtml = markdownToRichHtml(data.finalText);
+        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml);
+      } else if (data.error) {
+        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId,
+          `yah eror pas jalanin di server: ${data.error}. coba kirim lagi ya!`);
+      } else {
+        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId,
+          "tugasnya udah aku jalanin ya! tp aku ga dapet respons teks penutup dr sistem. coba cek repo kamu deh, harusnya kodenya udh ke-update");
+      }
+      console.log(`[SpacesResult] Step2: sendTelegram done for ${chatId}`);
+    } catch (e) { console.error(`[SpacesResult] Step2 FAIL (sendTelegram):`, e.message); }
+  } else {
+    console.log(`[SpacesResult] Step2: sendTelegram skipped (already sent by proxy) for ${chatId}`);
+  }
 
   try {
     await removePendingSpace(env, chatId);
@@ -98,6 +110,7 @@ export async function handleSpacesResult(env, chatId, data, progressMsgId) {
     await fetch(`${env.HF_SPACES_URL}/api/result?chatId=${chatId}`, { method: 'DELETE' });
   } catch (_) {}
 
+  await env.CHAT_HISTORY.put(`callback_done:${chatId}`, "1", { expirationTtl: 300 }).catch(() => {});
   await env.CHAT_HISTORY.delete(`hdl:${chatId}`).catch(() => {});
   console.log(`[SpacesResult] Completed for chat ${chatId}`);
 }
@@ -129,12 +142,6 @@ export async function pollSpacesResult(env, chatId, progressMsgId) {
       const mutexKey = `hdl:${chatId}`;
       if (await env.CHAT_HISTORY.get(mutexKey)) {
         console.log(`[ShortPoll] Chat ${chatId} already being handled, skipping`);
-        return true;
-      }
-
-      const callbackDone = await env.CHAT_HISTORY.get(`callback_done:${chatId}`);
-      if (callbackDone) {
-        console.log(`[ShortPoll] Chat ${chatId} already handled by callback, skipping`);
         return true;
       }
 

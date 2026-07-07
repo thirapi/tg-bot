@@ -169,6 +169,69 @@ export async function handleAPI(request, env, ctx) {
     return new Response("Method Not Allowed", { status: 405 });
   }
 
+  if (path.startsWith("/api/telegram-proxy/")) {
+    if (request.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+
+    const auth = request.headers.get("Authorization");
+    if (auth !== `Bearer ${CALLBACK_TOKEN}`) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    const method = path.slice("/api/telegram-proxy/".length);
+    if (!method) {
+      return new Response("Missing method", { status: 400 });
+    }
+
+    try {
+      const body = await request.json();
+      const tgUrl = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`;
+      const tgRes = await fetch(tgUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const tgData = await tgRes.json();
+      return new Response(JSON.stringify(tgData), {
+        status: tgRes.status,
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (e) {
+      console.error("Telegram proxy error:", e);
+      return new Response(JSON.stringify({ ok: false, error: e.message }), {
+        status: 502,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+
+  if (path.startsWith("/api/history/")) {
+    const auth = request.headers.get("Authorization");
+    if (auth !== `Bearer ${CALLBACK_TOKEN}`) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    const chatId = path.slice("/api/history/".length);
+    if (!chatId) {
+      return new Response("Missing chatId", { status: 400 });
+    }
+
+    try {
+      const { getHistory } = await import("../db/index.js");
+      const history = await getHistory(env, chatId);
+      return new Response(JSON.stringify(history), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (e) {
+      console.error("History fetch error:", e);
+      return new Response(JSON.stringify({ error: e.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+
   if (path === "/api/spaces-callback") {
     if (request.method !== "POST") {
       return new Response("Method Not Allowed", { status: 405 });
@@ -181,87 +244,17 @@ export async function handleAPI(request, env, ctx) {
 
     try {
       const body = await request.json();
-      const { chatId, newContents, maxHistory, finalText, error, action, progressText, isFinal } = body;
+      const { chatId, newContents, maxHistory, isFinal } = body;
 
       if (!chatId) {
         return new Response("Missing chatId", { status: 400 });
       }
 
-      // Handle Telegram action (e.g., typing)
-      if (action) {
-        const { sendTelegramAction } = await import("../services/telegram.js");
-        await sendTelegramAction(env.TELEGRAM_BOT_TOKEN, chatId, action).catch(e => 
-          console.error("Failed to send action on callback:", e)
-        );
-      }
-
-      // Handle progress text update by editing the progress message
-      if (progressText) {
-        const progressMsgId = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
-        if (progressMsgId) {
-          const { editTelegramMessage } = await import("../services/telegram.js");
-          const progressHtml = `Cocoa sedang menganalisis/menjalankan tugas kamu... ⏳\n\n<b>Status:</b> ${progressText}`;
-          await editTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, progressMsgId, progressHtml).catch(e =>
-            console.error("Failed to edit progress message:", e)
-          );
-        }
-      }
-
-      // Handle final cleanup + response (mutex-guarded against short-poll)
+      // Handle final cleanup (lock release, dequeue)
       if (isFinal) {
-        const mutexKey = `hdl:${chatId}`;
-        const cbDoneKey = `callback_done:${chatId}`;
-        const [isAlreadyHandled, isCbDone] = await Promise.all([
-          env.CHAT_HISTORY.get(mutexKey),
-          env.CHAT_HISTORY.get(cbDoneKey),
-        ]);
-
-        if (!isAlreadyHandled && !isCbDone) {
-          await env.CHAT_HISTORY.put(mutexKey, "1", { expirationTtl: 120 });
-
-          // Only the first handler sends response and deletes progress
-          if (finalText) {
-            const { sendTelegramMessage } = await import("../services/telegram.js");
-            const { markdownToRichHtml } = await import("../utils/formatter.js");
-            const richHtml = markdownToRichHtml(finalText);
-            await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml).catch(e =>
-              console.error("Failed to send finalText on callback:", e)
-            );
-          }
-
-          if (error) {
-            const { sendTelegramMessage } = await import("../services/telegram.js");
-            await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, error).catch(e =>
-              console.error("Failed to send error on callback:", e)
-            );
-          }
-
-          // progressMsgId dari body callback (direct pass, no KV)
-          let progressMsgId = body.progressMsgId;
-          if (!progressMsgId) {
-            for (let i = 0; i < 5; i++) {
-              progressMsgId = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
-              if (progressMsgId) break;
-              await new Promise(r => setTimeout(r, 300));
-            }
-          }
-          if (progressMsgId) {
-            const { deleteTelegramMessage } = await import("../services/telegram.js");
-            await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(progressMsgId)).catch(e =>
-              console.error("Failed to delete progress message:", e)
-            );
-            await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
-          }
-        } else {
-          console.log(`[Callback] Chat ${chatId} already handled, skipping response (hdl=${!!isAlreadyHandled} cbDone=${!!isCbDone})`);
-        }
-
-        // ALWAYS release lock and cleanup regardless of hdl
         console.log(`Releasing D1 lock for chat: ${chatId} (spaces-callback)`);
         await releaseChatLock(env, chatId);
-        await env.CHAT_HISTORY.put(cbDoneKey, "1", { expirationTtl: 300 }).catch(() => {});
         await removePendingSpace(env, chatId).catch(() => {});
-        await env.CHAT_HISTORY.delete(mutexKey).catch(() => {});
 
         // Dequeue pending message if any
         const { processMessage } = await import("./message.js");
@@ -287,12 +280,10 @@ export async function handleAPI(request, env, ctx) {
         }
       }
 
-      console.log(`[Callback] chatId=${chatId} newContents=${newContents?.length} finalText=${finalText?.slice(0,30)}`);
       // Save history to D1 if new contents are present
       if (newContents && newContents.length > 0) {
         const { addHistory, trimHistory } = await import("../db/index.js");
 
-        // Clean the new contents to ensure safety (strip media objects to metadata labels, etc.)
         const cleaned = newContents.map(c => ({
           role: c.role,
           parts: c.parts.map(p => {
@@ -308,6 +299,7 @@ export async function handleAPI(request, env, ctx) {
 
         await addHistory(env, chatId, cleaned);
         await trimHistory(env, chatId, maxHistory || 15);
+        await env.CHAT_HISTORY.put(`history_saved:${chatId}`, "1", { expirationTtl: 300 }).catch(() => {});
       }
 
       return new Response("OK", { status: 200 });
