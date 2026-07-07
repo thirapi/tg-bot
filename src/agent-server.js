@@ -37,7 +37,7 @@ const activeChats = new Set();
 
 let lastWorkerUrl = null;
 let heartbeatInterval = null;
-let workerAgent = new https.Agent({ keepAlive: true, maxSockets: 1, keepAliveMsecs: 30000 });
+const workerAgent = new https.Agent({ keepAlive: true, maxSockets: 1, keepAliveMsecs: 30000 });
 
 function startHeartbeat(workerUrl) {
   if (heartbeatInterval) return;
@@ -62,7 +62,7 @@ function startHeartbeat(workerUrl) {
       });
     } catch (e) {
       console.warn(`[Heartbeat] Ping error: ${e.message}`);
-      workerAgent = new https.Agent({ keepAlive: true, maxSockets: 1, keepAliveMsecs: 30000 });
+      workerAgent.destroy();
     }
   }, SPACES_HEARTBEAT_INTERVAL);
 }
@@ -241,13 +241,13 @@ const server = createServer(async (req, res) => {
 
               if (result.ok) {
                 console.log(`[Spaces] Callback success for chat ${stringChatId} (attempt ${attempt})`);
-                if (body.isFinal) resultsStore.delete(stringChatId);
+                resultsStore.delete(stringChatId);
                 return;
               }
               console.warn(`[Spaces] Callback returned ${result.status} for chat ${stringChatId} (attempt ${attempt}): ${result.text.slice(0, 200)}`);
             } catch (e) {
               console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}${e.cause}`);
-              workerAgent = new https.Agent({ keepAlive: true, maxSockets: 1, keepAliveMsecs: 30000 });
+              workerAgent.destroy();
             }
             if (attempt < 3) await new Promise(r => setTimeout(r, 3000));
           }
@@ -300,7 +300,7 @@ const server = createServer(async (req, res) => {
           }
 
           const newContent = currentContents.slice(originalHistoryLength)
-            .filter(c => !c._selfReflection && !c._budgetWarning);
+            .filter(c => !c._selfReflection);
           console.log(`[Spaces] originalHistoryLength=${originalHistoryLength} curLen=${currentContents.length} newLen=${newContent.length} roles=${newContent.map(c=>c.role).join(',')}`);
           let finalText = null;
           if (!result.escalationTriggered) {
