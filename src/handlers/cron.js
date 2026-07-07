@@ -25,7 +25,7 @@ async function pollSpacesResults(env, ctx) {
           const hdlExists = await env.CHAT_HISTORY.get(`hdl:${chatId}`);
           console.log(`[Cron] Spaces result not_found for chat ${chatId} callback_done=${!!cbDone} hdl=${!!hdlExists}`);
           if (cbDone) {
-            console.log(`[Cron] Chat ${chatId} already handled by callback, cleaning up pending space only`);
+            console.log(`[Cron] Chat ${chatId} already handled (callback_done), cleaning up pending space only`);
             const { removePendingSpace } = await import("../db/index.js");
             await removePendingSpace(env, chatId);
             continue;
@@ -60,7 +60,7 @@ async function pollSpacesResults(env, ctx) {
 
         const callbackDone = await env.CHAT_HISTORY.get(`callback_done:${chatId}`);
         if (callbackDone) {
-          console.log(`[Cron] Chat ${chatId} already handled by callback, skipping`);
+          console.log(`[Cron] Chat ${chatId} already handled (callback_done), skipping`);
           continue;
         }
 

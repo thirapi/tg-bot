@@ -146,13 +146,14 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      // Store worker url for callback
+      // Store worker url for proxy & result polling
       if (reqWorkerUrl) {
         lastWorkerUrl = reqWorkerUrl;
       }
 
       const stringChatId = String(chatId);
       if (activeChats.has(stringChatId)) {
+        console.log(`[Spaces] Returning BUSY for chat ${stringChatId} (activeChats.size=${activeChats.size})`);
         res.writeHead(429, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'busy' }));
         return;
@@ -164,6 +165,7 @@ const server = createServer(async (req, res) => {
 
       // Run the agent loop in the background
       activeChats.add(stringChatId);
+      console.log(`[Spaces] activeChats ADD ${stringChatId} (size=${activeChats.size})`);
 
       // Initialize result as 'processing' so cron doesn't clean up prematurely
       resultsStore.set(stringChatId, { status: 'processing', ts: Date.now() });
@@ -207,53 +209,6 @@ const server = createServer(async (req, res) => {
             if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
           }
           return null;
-        }
-
-        async function sendCallback(body) {
-          const url = new URL(`${lastWorkerUrl}/api/spaces-callback`);
-          const bodyStr = JSON.stringify(body);
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              const result = await new Promise((resolve, reject) => {
-                const req = https.request({
-                  hostname: url.hostname,
-                  path: url.pathname + url.search + `?_=${Date.now()}`,
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer kokoa-runner-secret',
-                    'Content-Length': Buffer.byteLength(bodyStr),
-                  },
-                  timeout: 25000,
-                }, (res) => {
-                  let data = '';
-                  res.on('data', c => data += c);
-                  res.on('end', () => {
-                    resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, text: data });
-                  });
-                });
-                req.on('error', (e) => {
-                  const cause = e.cause ? ` | cause: ${e.cause?.code || e.cause?.message || JSON.stringify(e.cause)}` : '';
-                  reject({ message: e.message, cause });
-                });
-                req.on('timeout', () => { req.destroy(); reject({ message: 'timeout', cause: '' }); });
-                req.write(bodyStr);
-                req.end();
-              });
-
-              if (result.ok) {
-                console.log(`[Spaces] Callback success for chat ${stringChatId} (attempt ${attempt})`);
-                resultsStore.delete(stringChatId);
-                return true;
-              }
-              console.warn(`[Spaces] Callback returned ${result.status} for chat ${stringChatId} (attempt ${attempt}): ${result.text.slice(0, 200)}`);
-            } catch (e) {
-              console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}${e.cause}`);
-            }
-            if (attempt < 3) await new Promise(r => setTimeout(r, 3000));
-          }
-          console.error(`[Spaces] Callback failed for chat ${stringChatId}, short-poll will handle`);
-          return false;
         }
 
         try {
@@ -333,24 +288,11 @@ const server = createServer(async (req, res) => {
               return r?.ok === true;
             })() : false;
 
-            // Delete progress message via proxy
-            if (progressMsgId) {
-              await proxyTelegram("deleteMessage", {
-                chat_id: Number(stringChatId), message_id: parseInt(progressMsgId),
-              });
-            }
-
             // Mark proxySent in stored result so short-poll doesn't re-send
             if (proxyOk) {
               const existing = resultsStore.get(stringChatId);
               if (existing) { existing.proxySent = true; }
             }
-
-            // Callback for history save + lock release (non-critical)
-            sendCallback({
-              chatId: stringChatId, newContents: newContent,
-              isFinal: true, maxHistory: 15,
-            });
           }
 
         } catch (err) {
@@ -376,25 +318,16 @@ const server = createServer(async (req, res) => {
               text: `yah eror pas jalanin di server: ${errorMsg}. coba kirim lagi ya!`,
             });
 
-            // Delete progress message via proxy
-            if (progressMsgId) {
-              await proxyTelegram("deleteMessage", {
-                chat_id: Number(stringChatId), message_id: parseInt(progressMsgId),
-              });
-            }
-
             // Mark proxySent in stored result
             if (proxyOk?.ok === true) {
               const existing = resultsStore.get(stringChatId);
               if (existing) { existing.proxySent = true; }
             }
-
-            // Callback for cleanup (non-critical)
-            sendCallback({ chatId: stringChatId, isFinal: true });
           }
 
         } finally {
           activeChats.delete(stringChatId);
+          console.log(`[Spaces] activeChats DELETE ${stringChatId} (size=${activeChats.size})`);
         }
       })();
 
@@ -411,6 +344,30 @@ const server = createServer(async (req, res) => {
   res.end('Not Found');
 });
 
+const KEEPALIVE_INTERVAL = 90000;
+async function keepalivePing() {
+  if (!lastWorkerUrl) return;
+  try {
+    await new Promise((resolve, reject) => {
+      const req = https.request(`${lastWorkerUrl}/api/spaces-ping`, {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer kokoa-runner-secret',
+          'Content-Type': 'application/json',
+        },
+        timeout: 10000,
+      }, (res) => { res.resume(); res.on('end', resolve); });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(); });
+      req.end(JSON.stringify({ ts: Date.now() }));
+    });
+    console.log('[Keepalive] Ping success');
+  } catch (e) {
+    console.error('[Keepalive] Ping failed:', e.message);
+  }
+}
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Agent server running on port ${PORT}`);
+  setInterval(keepalivePing, KEEPALIVE_INTERVAL);
 });

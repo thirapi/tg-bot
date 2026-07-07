@@ -1,5 +1,4 @@
 
-
 export async function handleSpacesResult(env, chatId, data, progressMsgId) {
   const { addHistory, trimHistory, removePendingSpace, releaseChatLock } = await import("../db/index.js");
   const { sendTelegramMessage, deleteTelegramMessage } = await import("../services/telegram.js");
@@ -8,32 +7,25 @@ export async function handleSpacesResult(env, chatId, data, progressMsgId) {
   console.log(`[SpacesResult] Result ready for chat ${chatId}`);
   console.log(`[SpacesResult] chatId=${chatId} newContent=${data.newContent?.length} finalText=${data.finalText?.slice(0,30)} proxySent=${data.proxySent}`);
 
-  const historySaved = await env.CHAT_HISTORY.get(`history_saved:${chatId}`).catch(() => null);
-
-  if (!historySaved) {
-    try {
-      if (data.newContent && data.newContent.length > 0) {
-        const cleaned = data.newContent.map(c => ({
-          role: c.role,
-          parts: c.parts.map(p => {
-            if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
-            const cp = {};
-            if (p.text !== undefined) cp.text = p.text;
-            if (Object.keys(cp).length > 0) return cp;
-            if (p.functionCall) return { text: `[FunctionCall: ${p.functionCall.name}]` };
-            if (p.functionResponse) return { text: `[FunctionResponse: ${p.functionResponse.name}]` };
-            return { text: '' };
-          }).filter(p => p.text || Object.keys(p).length > 0)
-        }));
-        await addHistory(env, chatId, cleaned);
-        await trimHistory(env, chatId, 15);
-      }
-      await env.CHAT_HISTORY.put(`history_saved:${chatId}`, "1", { expirationTtl: 300 }).catch(() => {});
-      console.log(`[SpacesResult] Step1: addHistory done for ${chatId}`);
-    } catch (e) { console.error(`[SpacesResult] Step1 FAIL (addHistory):`, e.message); }
-  } else {
-    console.log(`[SpacesResult] Step1: addHistory skipped (already saved by callback) for ${chatId}`);
-  }
+  try {
+    if (data.newContent && data.newContent.length > 0) {
+      const cleaned = data.newContent.map(c => ({
+        role: c.role,
+        parts: c.parts.map(p => {
+          if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
+          const cp = {};
+          if (p.text !== undefined) cp.text = p.text;
+          if (Object.keys(cp).length > 0) return cp;
+          if (p.functionCall) return { text: `[FunctionCall: ${p.functionCall.name}]` };
+          if (p.functionResponse) return { text: `[FunctionResponse: ${p.functionResponse.name}]` };
+          return { text: '' };
+        }).filter(p => p.text || Object.keys(p).length > 0)
+      }));
+      await addHistory(env, chatId, cleaned);
+      await trimHistory(env, chatId, 15);
+    }
+    console.log(`[SpacesResult] Step1: addHistory done for ${chatId}`);
+  } catch (e) { console.error(`[SpacesResult] Step1 FAIL (addHistory):`, e.message); }
 
   // Skip sending if proxy already sent the message
   if (!data.proxySent) {

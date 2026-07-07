@@ -232,81 +232,15 @@ export async function handleAPI(request, env, ctx) {
     }
   }
 
-  if (path === "/api/spaces-callback") {
-    if (request.method !== "POST") {
-      return new Response("Method Not Allowed", { status: 405 });
-    }
-
+  if (path === "/api/spaces-ping") {
     const auth = request.headers.get("Authorization");
     if (auth !== `Bearer ${CALLBACK_TOKEN}`) {
       return new Response("Unauthorized", { status: 401 });
     }
-
-    try {
-      const body = await request.json();
-      const { chatId, newContents, maxHistory, isFinal } = body;
-
-      if (!chatId) {
-        return new Response("Missing chatId", { status: 400 });
-      }
-
-      // Handle final cleanup (lock release, dequeue)
-      if (isFinal) {
-        console.log(`Releasing D1 lock for chat: ${chatId} (spaces-callback)`);
-        await releaseChatLock(env, chatId);
-        await removePendingSpace(env, chatId).catch(() => {});
-
-        // Dequeue pending message if any
-        const { processMessage } = await import("./message.js");
-        try {
-          const pendingRaw = await env.CHAT_HISTORY.get(`pending:${chatId}`);
-          if (pendingRaw) {
-            await env.CHAT_HISTORY.delete(`pending:${chatId}`).catch(() => {});
-            const pending = JSON.parse(pendingRaw);
-            const acquired = await acquireChatLock(env, chatId);
-            if (acquired) {
-              const fakeMsg = {
-                chat: { id: chatId },
-                text: pending.text,
-                caption: pending.caption,
-                photo: pending.photo,
-                voice: pending.voice,
-              };
-              ctx.waitUntil(processMessage(fakeMsg, env));
-            }
-          }
-        } catch (e) {
-          console.error('Dequeue pending message on callback failed:', e);
-        }
-      }
-
-      // Save history to D1 if new contents are present
-      if (newContents && newContents.length > 0) {
-        const { addHistory, trimHistory } = await import("../db/index.js");
-
-        const cleaned = newContents.map(c => ({
-          role: c.role,
-          parts: c.parts.map(p => {
-            if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
-            const cleanedPart = {};
-            if (p.text !== undefined) cleanedPart.text = p.text;
-            if (Object.keys(cleanedPart).length > 0) return cleanedPart;
-            if (p.functionCall) return { text: `[FunctionCall: ${p.functionCall.name}]` };
-            if (p.functionResponse) return { text: `[FunctionResponse: ${p.functionResponse.name}]` };
-            return { text: '' };
-          }).filter(p => p.text || Object.keys(p).length > 0)
-        }));
-
-        await addHistory(env, chatId, cleaned);
-        await trimHistory(env, chatId, maxHistory || 15);
-        await env.CHAT_HISTORY.put(`history_saved:${chatId}`, "1", { expirationTtl: 300 }).catch(() => {});
-      }
-
-      return new Response("OK", { status: 200 });
-    } catch (e) {
-      console.error("Spaces callback error:", e);
-      return new Response("Error", { status: 500 });
-    }
+    console.log("[Ping] Keepalive ping from Spaces");
+    return new Response(JSON.stringify({ ok: true, ts: Date.now() }), {
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   if (path === "/api/health") {

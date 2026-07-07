@@ -565,16 +565,22 @@ export async function processMessage(message, env) {
           return;
         }
 
-        // Busy atau sync — hapus progress message
+        // Busy — hapus progress message, release lock, user can retry
+        if (res && res.status === "busy") {
+          console.log(`[MsgLock] Spaces busy, releasing lock for chat ${chatId}`);
+          if (progressMsgId) {
+            const { deleteTelegramMessage } = await import("../services/telegram.js");
+            await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(progressMsgId)).catch(() => {});
+            await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
+          }
+          // shouldReleaseLock stays true → lock released in finally block
+          return;
+        }
+        // Sync atau unknown — hapus progress message
         if (progressMsgId) {
           const { deleteTelegramMessage } = await import("../services/telegram.js");
           await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(progressMsgId)).catch(() => {});
           await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
-        }
-        if (res && res.status === "busy") {
-          shouldReleaseLock = false;
-          console.log(`[MsgLock] shouldReleaseLock=false (Spaces busy) for chat ${chatId}`);
-          return;
         }
         console.log(`[MsgLock] Spaces returned unknown status=${res?.status}, falling through for chat ${chatId}`);
         return;
