@@ -210,9 +210,13 @@ export async function handleAPI(request, env, ctx) {
       // Handle final cleanup + response (mutex-guarded against short-poll)
       if (isFinal) {
         const mutexKey = `hdl:${chatId}`;
-        const isAlreadyHandled = await env.CHAT_HISTORY.get(mutexKey);
+        const cbDoneKey = `callback_done:${chatId}`;
+        const [isAlreadyHandled, isCbDone] = await Promise.all([
+          env.CHAT_HISTORY.get(mutexKey),
+          env.CHAT_HISTORY.get(cbDoneKey),
+        ]);
 
-        if (!isAlreadyHandled) {
+        if (!isAlreadyHandled && !isCbDone) {
           await env.CHAT_HISTORY.put(mutexKey, "1", { expirationTtl: 120 });
 
           // Only the first handler sends response and deletes progress
@@ -249,14 +253,15 @@ export async function handleAPI(request, env, ctx) {
             await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
           }
         } else {
-          console.log(`[Callback] Chat ${chatId} already handled by short-poll, skipping response`);
+          console.log(`[Callback] Chat ${chatId} already handled, skipping response (hdl=${!!isAlreadyHandled} cbDone=${!!isCbDone})`);
         }
 
         // ALWAYS release lock and cleanup regardless of hdl
         console.log(`Releasing D1 lock for chat: ${chatId} (spaces-callback)`);
         await releaseChatLock(env, chatId);
-        await env.CHAT_HISTORY.put(`callback_done:${chatId}`, "1", { expirationTtl: 300 }).catch(() => {});
+        await env.CHAT_HISTORY.put(cbDoneKey, "1", { expirationTtl: 300 }).catch(() => {});
         await removePendingSpace(env, chatId).catch(() => {});
+        await env.CHAT_HISTORY.delete(mutexKey).catch(() => {});
 
         // Dequeue pending message if any
         const { processMessage } = await import("./message.js");

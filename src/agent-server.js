@@ -4,7 +4,6 @@ import { execSync } from 'child_process';
 import { runAgentLoop, buildProviderConfigs } from './handlers/message.js';
 import { executeTool } from './tools/executor.js';
 import { executeSpacesTool, isSpacesTool } from './tools/spaces-executor.js';
-import { SPACES_HEARTBEAT_INTERVAL } from './config.js';
 
 async function hybridExecutor(name, args, env, chatId) {
   if (isSpacesTool(name)) {
@@ -36,36 +35,6 @@ setInterval(() => {
 const activeChats = new Set();
 
 let lastWorkerUrl = null;
-let heartbeatInterval = null;
-const workerAgent = new https.Agent({ keepAlive: true, maxSockets: 1, keepAliveMsecs: 30000 });
-
-function startHeartbeat(workerUrl) {
-  if (heartbeatInterval) return;
-  console.log(`[Heartbeat] Starting keep-warm pings to ${workerUrl} every ${SPACES_HEARTBEAT_INTERVAL}ms`);
-  heartbeatInterval = setInterval(async () => {
-    const url = new URL(`${workerUrl}/api/health`);
-    try {
-      await new Promise((resolve, reject) => {
-        const req = https.request({
-          agent: workerAgent,
-          hostname: url.hostname,
-          path: url.pathname + url.search + `?_=${Date.now()}`,
-          method: 'GET',
-          timeout: 10000,
-        }, (res) => {
-          res.resume();
-          resolve();
-        });
-        req.on('error', reject);
-        req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-        req.end();
-      });
-    } catch (e) {
-      console.warn(`[Heartbeat] Ping error: ${e.message}`);
-      workerAgent.destroy();
-    }
-  }, SPACES_HEARTBEAT_INTERVAL);
-}
 
 function parseBody(req) {
   return new Promise((resolve, reject) => {
@@ -177,10 +146,9 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      // Keep connection warm by storing worker url and starting heartbeat
+      // Store worker url for callback
       if (reqWorkerUrl) {
         lastWorkerUrl = reqWorkerUrl;
-        startHeartbeat(reqWorkerUrl);
       }
 
       const stringChatId = String(chatId);
@@ -213,7 +181,6 @@ const server = createServer(async (req, res) => {
             try {
               const result = await new Promise((resolve, reject) => {
                 const req = https.request({
-                  agent: workerAgent,
                   hostname: url.hostname,
                   path: url.pathname + url.search + `?_=${Date.now()}`,
                   method: 'POST',
@@ -247,7 +214,6 @@ const server = createServer(async (req, res) => {
               console.warn(`[Spaces] Callback returned ${result.status} for chat ${stringChatId} (attempt ${attempt}): ${result.text.slice(0, 200)}`);
             } catch (e) {
               console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}${e.cause}`);
-              workerAgent.destroy();
             }
             if (attempt < 3) await new Promise(r => setTimeout(r, 3000));
           }

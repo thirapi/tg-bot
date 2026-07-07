@@ -98,6 +98,7 @@ export async function handleSpacesResult(env, chatId, data, progressMsgId) {
     await fetch(`${env.HF_SPACES_URL}/api/result?chatId=${chatId}`, { method: 'DELETE' });
   } catch (_) {}
 
+  await env.CHAT_HISTORY.delete(`hdl:${chatId}`).catch(() => {});
   console.log(`[SpacesResult] Completed for chat ${chatId}`);
 }
 

@@ -259,7 +259,7 @@ Perbedaan arsitektur:
 |-------|-------------|---------------|
 | **Arah komunikasi utama** | Space → Worker (Space initiate semua outbound via proxy) | Worker → Spaces (submit task), Spaces → Worker (callback result) |
 | **Masalah utama** | Outbound HTTP dari Space diblokir HF | **Callback** dari Space ke Worker diblokir HF NAT |
-| **Solusi** | Route SEMUA traffic melalui Cloudflare Worker proxy | Persistent keepAlive + heartbeat untuk maintain NAT mapping |
+| **Solusi** | Route SEMUA traffic melalui Cloudflare Worker proxy | ~~Persistent keepAlive + heartbeat~~ (GAGAL, lihat 5.8.4). Short-poll sebagai primary |
 | **Telegram API access** | Via Cloudflare Worker proxy | Langsung dari Worker (Worker → Telegram works) |
 
 **Detail proxy HuggingClaw:**
@@ -278,9 +278,11 @@ HuggingClaw tidak punya pola Spaces→Worker callback. Semua komunikasi Spaces�
 - `delete newOptions.agent` penting ketika hostname di-rewrite — jika kita perlu rewrite URL di masa depan, ini pattern yang harus diikuti
 - HuggingClaw menggunakan **external** Cloudflare Worker cron (10 menit interval) untuk cegah Spaces sleep — ini lapisan terpisah dari proxy, mirip dengan cron kita untuk polling result
 
-#### 5.8.4 Solusi: Persistent TLS Connection via keepAlive Agent
+#### 5.8.4 Solusi yang Gagal: Persistent TLS Connection via keepAlive Agent
 
-Mengganti `keepAlive: false` (koneksi baru tiap request) dengan **shared `https.Agent`**:
+**Peringatan: Strategi ini terbukti GAGAL di HF Spaces. Dokumentasi sebagai pelajaran, bukan rekomendasi.**
+
+Awalnya kita coba `keepAlive: true` + `maxSockets: 1` + heartbeat 5s:
 
 ```javascript
 const workerAgent = new https.Agent({
@@ -290,77 +292,61 @@ const workerAgent = new https.Agent({
 });
 ```
 
-**Semua** komunikasi Spaces→Worker (heartbeat + callback) memakai agent yang sama:
+**Mengapa gagal:**
 
-```javascript
-const req = https.request({
-  agent: workerAgent, // ← reuse persistent connection
-  hostname: url.hostname,
-  // ...
-});
+```
+1. KeepAlive socket A dibuat → NAT izinkan (first connection) ✅
+2. Socket A dipakai heartbeat & callback ✅
+3. Socket A mati (TLS error, NAT drop) ❌
+4. workerAgent.destroy() → Socket A dibersihkan
+5. NAT masih track Socket A di TIME_WAIT (~60-120 detik)
+6. Heartbeat 5s coba bikin Socket B → NAT blokir ("second connection") ❌
+7. workerAgent.destroy() lagi → loop tidak pernah recover ❌
 ```
 
-**Recovery mechanism: `workerAgent.destroy()` on error**
+`destroy()` justru MEMPERPARAH: bikin koneksi baru saat NAT masih di TIME_WAIT. Bandingkan dengan pendekatan HuggingClaw (`delete newOptions.agent`) yang pakai **fresh connections tanpa keepAlive** dan **interval request >60 detik** — setiap koneksi dianggap sebagai "first connection" oleh NAT karena TIME_WAIT sudah clear.
 
-Ketika TLS error terjadi (NAT drop koneksi mid-flight), socket dalam keadaan corrupt. Agent perlu dibersihkan:
+**Kesimpulan:** KeepAlive + heartbeat 5s + destroy on error tidak cocok untuk HF Spaces NAT. Fresh connections (tanpa keepAlive) dengan interval cukup panjang lebih reliable.
 
-```javascript
-req.on('error', (e) => {
-  workerAgent.destroy();  // destroy broken socket only
-  reject(e);
-});
+#### 5.8.5 Heartbeat: Tidak Efektif untuk Maintain NAT
+
+Heartbeat 5 detik dari Spaces → Worker menggunakan agent keepAlive **terbukti tidak efektif** dari log:
+
+```
+11:39:09 — Container start, heartbeat mulai
+11:39:xx — Heartbeat sukses (socket A terbentuk)
+... beberapa menit ...
+11:43:xx — Callback gagal / heartbeat error:
+           "Client network socket disconnected before secure TLS connection was established"
+11:43:xx — workerAgent.destroy()  
+11:43:xx — Heartbeat 5s: socket baru → blocked → error → destroy → loop
+... loop terus sampai container restart ...
 ```
 
-`agent.destroy()` hanya menghancurkan **socket yang rusak**, bukan agent-nya. Agent tetap hidup dengan konfigurasi `{keepAlive: true, maxSockets: 1}`. Request berikutnya menggunakan `agent: workerAgent` akan membuat socket baru yang juga keepAlive. Ini tidak bertentangan dengan konsep 1 persistent connection — kabel-nya yang diganti, operator telepon-nya tetap sama.
+**Masalah:**
+- 5 detik terlalu cepat — tidak memberi waktu TIME_WAIT NAT untuk clear (~60-120 detik)
+- Setelah koneksi pertama mati, semua koneksi berikutnya di blokir
+- Loop: destroy → create → blocked → destroy → ... (tidak pernah recover)
 
-**Hasil:**
+**Rekomendasi:**
+- Hapus heartbeat internal (Spaces → Worker)
+- Ganti dengan external keepAlive (Worker cron ping Spaces) — arah inbound, tidak kena NAT restriction
+- Jika pakai fresh connections untuk callback, pastikan interval retry >60 detik
 
-| Sebelum (keepAlive: false) | Sesudah (keepAlive agent + destroy on error) |
-|---|---|
-| Callback 1: ✅ | Callback 1: ✅ |
-| Callback 2-4: ❌ gagal semua | Callback 2-4: ✅ semua (attempt 1) |
-| Heartbeat: ❌ timeout terus | Heartbeat: ✅ lancar |
+#### 5.8.6 Kesimpulan untuk Arsitektur (Revisi)
 
-#### 5.8.5 Mekanisme Pendukung: Heartbeat
-
-Heartbeat (`GET /api/health` ke Worker) berjalan setiap **5 detik** (`SPACES_HEARTBEAT_INTERVAL = 5000` di `config.js`) via agent yang sama untuk:
-
-1. **Menjaga NAT mapping tetap aktif** — HF Spaces NAT gateway cenderung drop mapping setelah beberapa detik idle. Heartbeat 5 detik memastikan ada traffic periodik.
-2. **Deteksi dini koneksi rusak** — Jika heartbeat gagal (TLS error), `workerAgent.destroy()` membersihkan socket corrupt dan heartbeat berikutnya (5 detik lagi) membuat koneksi baru.
-3. **Mencegah Spaces sleep** — HF Spaces bisa sleep setelah ~30 menit idle. Heartbeat periodik mencegah ini.
-
-```javascript
-heartbeatInterval = setInterval(async () => {
-  await new Promise((resolve, reject) => {
-    const req = https.request({
-      agent: workerAgent,
-      hostname: url.hostname,
-      path: '/api/health',
-      method: 'GET',
-      timeout: 10000,
-    }, /* ... */);
-  });
-}, SPACES_HEARTBEAT_INTERVAL); // 5000ms (dari config.js)
-```
-
-**Mengapa 5 detik?**
-- 30 detik terlalu lambat — NAT mapping HF bisa drop lebih cepat
-- 5 detik memberikan keseimbangan antara responsivitas dan beban
-- Biaya: ~0.2 req/detik ke Worker, negligible untuk Cloudflare free tier
-
-#### 5.8.6 Kesimpulan untuk Arsitektur
-
-| Pendekatan | Cara Kerja | Cocok Untuk |
+| Pendekatan | Cara Kerja | Status |
 |---|---|---|
-| HuggingClaw: forward proxy via Cloudflare Worker | Semua outbound Spaces lewat Worker proxy, Space tidak perlu callback | Bot dengan banyak API eksternal (Telegram, Discord, WhatsApp) |
-| n8n: persistent connection (inferred) | Satu koneksi dipakai ulang untuk semua komunikasi | Worker/webhook (outbound sporadis dari Spaces) |
-| **Kita: persistent agent + heartbeat + destroy on error** | Satu koneksi TCP/TLS + ping 5s + cleanup socket corrupt | Webhook dengan callback sporadis, NAT mapping ketat |
+| HuggingClaw: forward proxy via Cloudflare Worker | Fresh connections, no keepAlive, proxy all traffic | ✅ Works (berdasarkan repo dan user reports) |
+| n8n: persistent connection (inferred) | Belum diverifikasi | ? |
+| **Kita: keepAlive + heartbeat + destroy on error** | Satu koneksi persistent + ping 5s + cleanup | ❌ **GAGAL** (lihat seksi 5.8.4) |
+| **Kita: short-poll sebagai primary** | Worker polling Spaces via inbound HTTP | ✅ **Works** (~13 detik latency) |
 
-Kunci: **HF Spaces NAT gateway hanya tolerate 1 koneksi aktif ke workers.dev per window waktu** dan intermitten memutus koneksi idle. Strategi kita:
-1. **`keepAlive: true, maxSockets: 1`** — 1 koneksi persistent yang dipakai ulang
-2. **Heartbeat 5 detik** — traffic periodik jaga NAT mapping tetap hangat
-3. **`workerAgent.destroy()` on error** — bersihkan socket corrupt, agent tetap hidup
-4. **Short-poll + Cron fallback** — jika semua gagal, Worker polling result dari Spaces langsung
+Kunci pelajaran:
+1. **KeepAlive + destroy on error = GAGAL** — bikin NAT TIME_WAIT stuck
+2. **Fresh connections** (tanpa keepAlive) dengan interval >60 detik works — setiap koneksi dianggap "first connection"
+3. **Short-poll** (Worker → Spaces, inbound) lebih reliable dari callback (Spaces → Worker, outbound)
+4. **Arah komunikasi penting:** inbound ke Spaces selalu works, outbound dari Spaces intermittent
 
 ---
 
@@ -420,7 +406,9 @@ tg-bot/
 │       ├── runner-executor.js  # GHA runner entry point
 │       └── runner-gemini.js    # GHA runner agent loop
 ├── docs/
-│   └── features.md             # Dokumentasi ini
+│   ├── features.md             # Dokumentasi utama
+│   └── research/
+│       └── huggingclaw-analysis.md  # Analisis mendalam HuggingClaw
 ├── Dockerfile                  # HF Spaces Docker build
 ├── wrangler.jsonc              # Konfigurasi Cloudflare Workers
 ├── package.json
