@@ -232,17 +232,6 @@ export async function handleAPI(request, env, ctx) {
     }
   }
 
-  if (path === "/api/spaces-ping") {
-    const auth = request.headers.get("Authorization");
-    if (auth !== `Bearer ${CALLBACK_TOKEN}`) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-    console.log("[Ping] Keepalive ping from Spaces");
-    return new Response(JSON.stringify({ ok: true, ts: Date.now() }), {
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
   if (path === "/api/health") {
     return new Response(JSON.stringify({ status: "ok", ts: Date.now() }), {
       headers: { "Content-Type": "application/json" },

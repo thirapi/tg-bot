@@ -344,30 +344,6 @@ const server = createServer(async (req, res) => {
   res.end('Not Found');
 });
 
-const KEEPALIVE_INTERVAL = 90000;
-async function keepalivePing() {
-  if (!lastWorkerUrl) return;
-  try {
-    await new Promise((resolve, reject) => {
-      const req = https.request(`${lastWorkerUrl}/api/spaces-ping`, {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer kokoa-runner-secret',
-          'Content-Type': 'application/json',
-        },
-        timeout: 10000,
-      }, (res) => { res.resume(); res.on('end', resolve); });
-      req.on('error', reject);
-      req.on('timeout', () => { req.destroy(); reject(); });
-      req.end(JSON.stringify({ ts: Date.now() }));
-    });
-    console.log('[Keepalive] Ping success');
-  } catch (e) {
-    console.error('[Keepalive] Ping failed:', e.message);
-  }
-}
-
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Agent server running on port ${PORT}`);
-  setInterval(keepalivePing, KEEPALIVE_INTERVAL);
 });

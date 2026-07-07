@@ -373,10 +373,10 @@ Dedup mechanism:
 
 Kunci pelajaran:
 1. **KeepAlive + destroy on error = GAGAL** — bikin NAT TIME_WAIT stuck
-2. **Fresh connections** (tanpa keepAlive) dengan interval cukup panjang works — setiap koneksi dianggap "first connection"
-3. **Proxy pattern** mengubah arah komunikasi: Spaces tidak perlu langsung ke Telegram API, cukup ke Worker yang teruskan
-4. **Short-poll** (Worker → Spaces, inbound) tetap primary reliable path
-5. **Callback dihapus** — retry 3× dengan delay 3s cuma memperparah NAT TIME_WAIST. Proxy + short-poll cukup.
+2. **Fresh connections** (tanpa keepAlive) works hanya untuk koneksi PERTAMA ke origin. Koneksi ke-2+ masuk TIME_WAIT → diblokir NAT. Periodic ping 90s juga gagal — NAT tidak bisa diakali.
+3. **Proxy pattern** mengubah arah komunikasi: Spaces tidak perlu langsung ke Telegram API, cukup ke Worker yang teruskan. Fast path untuk first connection.
+4. **Short-poll** (Worker → Spaces, inbound) satu-satunya reliable path. Tidak kena NAT restriction karena inbound.
+5. **Callback dihapus** — retry 3× dengan delay 3s cuma memperparah NAT. Proxy (best-effort) + short-poll (reliable) sudah cukup.
 
 ---
 
