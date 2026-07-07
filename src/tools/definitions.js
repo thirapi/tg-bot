@@ -226,6 +226,20 @@ export const githubTools = [
         },
       },
       {
+        name: "createBranch",
+        description: "Membuat branch baru di repositori GitHub dari branch/commit tertentu. Gunakan sebelum membuat perubahan dan Pull Request.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            owner: { type: "STRING", description: "Username atau organisasi pemilik repo." },
+            repo: { type: "STRING", description: "Nama repositori." },
+            branch: { type: "STRING", description: "Nama branch baru yang akan dibuat." },
+            from_branch: { type: "STRING", description: "Branch sumber (default: default branch repo)." },
+          },
+          required: ["owner", "repo", "branch"],
+        },
+      },
+      {
         name: "createIssueComment",
         description: "Membuat komentar baru pada issue atau Pull Request di GitHub.",
         parameters: {

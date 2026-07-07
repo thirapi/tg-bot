@@ -254,14 +254,17 @@ const server = createServer(async (req, res) => {
 
           // Restore persisted workspace for this chat session
           const workspaceKey = `workspace:${stringChatId}`;
-          const savedWorkspace = workspaceStore.get(workspaceKey);
-          if (savedWorkspace) {
+          const savedState = workspaceStore.get(workspaceKey);
+          if (savedState) {
+            const savedPath = typeof savedState === 'string' ? savedState : savedState.path;
+            const savedRepo = typeof savedState === 'string' ? null : savedState.repo;
             const { existsSync } = await import('fs');
-            if (existsSync(savedWorkspace)) {
-              proxyEnv.__WORKSPACE = savedWorkspace;
-              console.log(`[Spaces] Restored workspace for chat ${stringChatId}: ${savedWorkspace}`);
+            if (existsSync(savedPath)) {
+              proxyEnv.__WORKSPACE = savedPath;
+              if (savedRepo) proxyEnv.CURRENT_REPO = savedRepo;
+              console.log(`[Spaces] Restored workspace for chat ${stringChatId}: ${savedPath}${savedRepo ? ` (repo: ${savedRepo})` : ''}`);
             } else {
-              console.log(`[Spaces] Persisted workspace folder not found on disk (likely container restarted), clearing: ${savedWorkspace}`);
+              console.log(`[Spaces] Persisted workspace folder not found on disk (likely container restarted), clearing: ${savedPath}`);
               workspaceStore.delete(workspaceKey);
             }
           }
@@ -279,9 +282,11 @@ const server = createServer(async (req, res) => {
           );
 
           // Persist workspace update if cloneRepo was called during this loop
-          if (proxyEnv.__WORKSPACE && proxyEnv.__WORKSPACE !== savedWorkspace) {
-            workspaceStore.set(workspaceKey, proxyEnv.__WORKSPACE);
-            console.log(`[Spaces] Saved workspace for chat ${stringChatId}: ${proxyEnv.__WORKSPACE}`);
+          const newPath = proxyEnv.__WORKSPACE;
+          const newRepo = proxyEnv.CURRENT_REPO;
+          if (newPath && (!savedState || newPath !== (typeof savedState === 'string' ? savedState : savedState.path))) {
+            workspaceStore.set(workspaceKey, { path: newPath, repo: newRepo || null });
+            console.log(`[Spaces] Saved workspace for chat ${stringChatId}: ${newPath}${newRepo ? ` (repo: ${newRepo})` : ''}`);
           }
 
           const newContent = currentContents.slice(originalHistoryLength)

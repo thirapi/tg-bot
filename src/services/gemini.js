@@ -12,15 +12,18 @@ const personaReinforcement =
     "pake `checkWorkflowStatus`.";
 
   const spacesHint =
-    "PENTING — CARA ANALISIS REPO: " +
-    "JANGAN panggil `triggerDeveloperWorkflow` untuk analisis repo. " +
-    "Gunakan tools server langsung:\n" +
-    "1. `cloneRepo` — clone repo ke server (butuh internet, cepet)\n" +
-    "2. `listLocalDir` — lihat struktur folder\n" +
-    "3. `readLocalFile` — baca isi file\n" +
-    "4. `grepLocalFiles` — cari teks di file\n" +
-    "5. `runCommand` — jalanin test/lint kalo perlu\n\n" +
-    "`triggerDeveloperWorkflow` HANYA untuk tugas yg butuh kompilasi, install npm, atau git commit/push.";
+    "Kamu jalan di dedicated server dengan akses PENUH:\n" +
+    "- Local: cloneRepo, readLocalFile, listLocalDir, grepLocalFiles, runCommand\n" +
+    "- GitHub API: createOrUpdateFile, createPullRequest, createBranch, dll (lengkap)\n" +
+    "- Web: webSearch, webFetch\n\n" +
+    "ALUR KERJA YANG BENAR:\n" +
+    "1. cloneRepo('owner/repo') — clone ke filesistem lokal\n" +
+    "2. listLocalDir / readLocalFile / grepLocalFiles — eksplorasi & baca kode\n" +
+    "3. runCommand — jalankan build/test/lint untuk verifikasi\n" +
+    "4. createBranch — bikin branch baru untuk perubahan\n" +
+    "5. createOrUpdateFile — push perubahan ke GitHub (sha otomatis)\n" +
+    "6. createPullRequest — buat PR dari branch tersebut\n\n" +
+    "`triggerDeveloperWorkflow` HANYA untuk tugas yang butuh >4 menit atau environment spesifik (deploy, Docker build, dll).";
 
   const contextHint =
     "PENTING — KONTEKS PERCAKAPAN: " +
@@ -31,8 +34,10 @@ const personaReinforcement =
   const escalationHint =
     "PENTING — AUTO-ESKALASI: " +
     "Sistem akan auto-escalate kalo kamu panggil tool GitHub >3 kali atau iteration >= 4 " +
-    "tanpa menyelesaikan tugas. Kalo tugasnya ANALISIS REPO, jangan tunggu auto-escalate — " +
-    "kerjain langsung pake cloneRepo dkk. Auto-escalate cuma berguna kalo kamu buntu.";
+    "tanpa menyelesaikan tugas. " +
+    (env.IS_SPACES
+      ? "Kalo tugasnya analisis atau coding langsung, kerjain pake tools yang ada. Auto-escalate ke GHA hanya kalo kamu buntu banget."
+      : "Kalo tugasnya ANALISIS REPO, jangan tunggu auto-escalate — kerjain langsung pake cloneRepo dkk. Auto-escalate cuma berguna kalo kamu buntu.");
 
 const planningHint =
   "kalo ada perintah yang ribet (bikin fitur, analisis besar, dll), " +
@@ -87,22 +92,28 @@ export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
     : "";
 
   // Inject active workspace so AI knows which repo is currently cloned
+  const currentRepoName = env.CURRENT_REPO || '';
+  const repoContext = currentRepoName
+    ? `[Repo aktif: ${currentRepoName}]`
+    : '';
   const workspaceContext = env.__WORKSPACE
-    ? `[Workspace aktif: repo sudah ter-clone di ${env.__WORKSPACE}. Gunakan path ini untuk readLocalFile/listLocalDir/grepLocalFiles/runCommand tanpa perlu cloneRepo lagi.]`
+    ? `[Workspace aktif: repo (${currentRepoName || 'unknown'}) sudah ter-clone di ${env.__WORKSPACE}. Gunakan path ini untuk readLocalFile/listLocalDir/grepLocalFiles/runCommand tanpa perlu cloneRepo lagi.]`
     : `[Workspace: belum ada repo yang ter-clone. Panggil cloneRepo(repo) dulu sebelum membaca file lokal.]`;
 
   const limitsContext =
     "[batasan lingkungan:]\n" +
-    "- kamu jalan di dedicated server, punya cukup waktu dan iterasi buat ngerjain tugas kompleks\n" +
-    "- kamu bisa clone repo, baca file, grep, dan jalanin shell command langsung via tools server\n" +
-    "- kamu bisa pake tool github api, web search, memory, task planning, dan reminder\n" +
-    "- GHA (`triggerDeveloperWorkflow`) khusus untuk tugas yg butuh kompilasi/install dependensi\n" +
-    "- kalo tugasnya simple (baca file github, bikin issue, cari info, dll) — kerjain sendiri pake tool yang ada";
+    "- kamu jalan di dedicated server, waktu eksekusi sampe 4 menit\n" +
+    "- kamu bisa clone repo, baca file, grep, jalanin shell command langsung\n" +
+    "- kamu punya akses FULL GitHub API (createOrUpdateFile, createPullRequest, createBranch, dll)\n" +
+    "- kamu bisa akses web search dan memory\n" +
+    "- GHA (`triggerDeveloperWorkflow`) khusus untuk yg butuh >4 menit atau environment khusus\n" +
+    "- kalo tugasnya simple — kerjain langsung pake tool yang ada";
 
   const finalSystemInstruction = [
     systemPersona,
     systemInstruction,
     memoryContext,
+    env.IS_SPACES ? repoContext : null,
     env.IS_SPACES ? workspaceContext : null,
     limitsContext,
     webToolHint,

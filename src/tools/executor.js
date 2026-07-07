@@ -49,13 +49,21 @@ export async function executeTool(name, args, env, chatId) {
     }
     case "createOrUpdateFile": {
       const endpoint = `repos/${args.owner}/${args.repo}/contents/${args.path}`;
+      let sha = args.sha;
+      if (!sha) {
+        try {
+          const refParam = args.branch ? `?ref=${args.branch}` : '';
+          const existing = await callGitHubAPI(env, endpoint + refParam);
+          if (existing && existing.sha) sha = existing.sha;
+        } catch (_) {}
+      }
       const bytes = new TextEncoder().encode(args.content);
       const base64Content = bufferToBase64(bytes);
       const body = {
         message: args.message,
         content: base64Content,
       };
-      if (args.sha) body.sha = args.sha;
+      if (sha) body.sha = sha;
       if (args.branch) body.branch = args.branch;
       return callGitHubAPI(env, endpoint, "PUT", body);
     }
@@ -68,6 +76,21 @@ export async function executeTool(name, args, env, chatId) {
       };
       if (args.body) body.body = args.body;
       return callGitHubAPI(env, endpoint, "POST", body);
+    }
+    case "createBranch": {
+      const refEndpoint = `repos/${args.owner}/${args.repo}/git/refs`;
+      let baseSha;
+      try {
+        const fromBranch = args.from_branch || 'main';
+        const ref = await callGitHubAPI(env, `repos/${args.owner}/${args.repo}/git/refs/heads/${fromBranch}`);
+        baseSha = ref.object.sha;
+      } catch (_) {
+        return { error: `Gagal mendapatkan SHA branch sumber. Pastikan branch '${args.from_branch || 'main'}' ada.` };
+      }
+      return callGitHubAPI(env, refEndpoint, "POST", {
+        ref: `refs/heads/${args.branch}`,
+        sha: baseSha,
+      });
     }
     case "mergePullRequest": {
       const pull_number = parseInt(args.pull_number, 10);

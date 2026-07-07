@@ -21,6 +21,10 @@ async function executeSpacesTool(name, args, env, chatId) {
         { stdio: "pipe", timeout: 60000 }
       );
       env.__WORKSPACE = targetDir;
+      const repoParts = args.repo.split("/");
+      if (repoParts.length === 2) {
+        env.CURRENT_REPO = args.repo;
+      }
       return { workspace: targetDir, message: `Repo ${args.repo} berhasil di-clone ke ${targetDir}` };
     }
     case "readLocalFile": {
