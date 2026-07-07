@@ -549,14 +549,17 @@ export async function processMessage(message, env) {
         const { sendTelegramMessage } = await import("../services/telegram.js");
         const sent = await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, "Cocoa sedang bekerja... ⏳");
         const progressMsgId = sent && sent.length > 0 && sent[0].message_id ? String(sent[0].message_id) : null;
+        console.log(`[MsgLock] progressMsgId=${progressMsgId} for chat ${chatId}`);
         if (progressMsgId) {
           await env.CHAT_HISTORY.put(`progress_msg:${chatId}`, progressMsgId, { expirationTtl: 600 });
         }
 
         const { processViaSpaces } = await import("../services/hf-spaces.js");
         const res = await processViaSpaces(env, chatId, userPrompt, mediaData, history, progressMsgId);
+        console.log(`[MsgLock] Spaces returned status=${res?.status} for chat ${chatId}`);
         if (res && res.status === "processing") {
           shouldReleaseLock = false;
+          console.log(`[MsgLock] shouldReleaseLock=false (Spaces processing) for chat ${chatId}`);
           const { pollSpacesResult } = await import("../services/spaces-poll.js");
           await pollSpacesResult(env, chatId, progressMsgId);
           return;
@@ -570,8 +573,10 @@ export async function processMessage(message, env) {
         }
         if (res && res.status === "busy") {
           shouldReleaseLock = false;
+          console.log(`[MsgLock] shouldReleaseLock=false (Spaces busy) for chat ${chatId}`);
           return;
         }
+        console.log(`[MsgLock] Spaces returned unknown status=${res?.status}, falling through for chat ${chatId}`);
         return;
       } catch (e) {
         console.error("Spaces unreachable, falling back to direct processing:", e.message);
@@ -659,8 +664,9 @@ export async function processMessage(message, env) {
   } finally {
     isProcessing = false;
     clearTimeout(typingTimer);
+    console.log(`[MsgLock] finally block: shouldReleaseLock=${shouldReleaseLock} for chat ${chatId}`);
     if (shouldReleaseLock) {
-      console.log(`Releasing D1 lock for chat: ${chatId}`);
+      console.log(`[MsgLock] Releasing D1 lock for chat: ${chatId}`);
       await releaseChatLock(env, chatId);
       try {
         const pendingRaw = await env.CHAT_HISTORY.get(`pending:${chatId}`);

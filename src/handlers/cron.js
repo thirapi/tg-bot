@@ -21,7 +21,16 @@ async function pollSpacesResults(env, ctx) {
         if (data.status === 'processing') continue;
 
         if (data.status === 'not_found') {
-          console.log(`[Cron] Spaces result not found for chat ${chatId}, sending error`);
+          const cbDone = await env.CHAT_HISTORY.get(`callback_done:${chatId}`);
+          const hdlExists = await env.CHAT_HISTORY.get(`hdl:${chatId}`);
+          console.log(`[Cron] Spaces result not_found for chat ${chatId} callback_done=${!!cbDone} hdl=${!!hdlExists}`);
+          if (cbDone) {
+            console.log(`[Cron] Chat ${chatId} already handled by callback, cleaning up pending space only`);
+            const { removePendingSpace } = await import("../db/index.js");
+            await removePendingSpace(env, chatId);
+            continue;
+          }
+          console.log(`[Cron] Sending restart error for chat ${chatId}`);
           const { releaseChatLock, removePendingSpace } = await import("../db/index.js");
           const { deleteTelegramMessage } = await import("../services/telegram.js");
           await sendTelegramMessage(

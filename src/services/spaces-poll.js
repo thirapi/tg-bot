@@ -8,57 +8,66 @@ export async function handleSpacesResult(env, chatId, data, progressMsgId) {
   console.log(`[SpacesResult] Result ready for chat ${chatId}`);
   console.log(`[SpacesResult] chatId=${chatId} newContent=${data.newContent?.length} finalText=${data.finalText?.slice(0,30)}`);
 
-  if (data.newContent && data.newContent.length > 0) {
-    const cleaned = data.newContent.map(c => ({
-      role: c.role,
-      parts: c.parts.map(p => {
-        if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
-        const cp = {};
-        if (p.text !== undefined) cp.text = p.text;
-        if (Object.keys(cp).length > 0) return cp;
-        if (p.functionCall) return { text: `[FunctionCall: ${p.functionCall.name}]` };
-        if (p.functionResponse) return { text: `[FunctionResponse: ${p.functionResponse.name}]` };
-        return { text: '' };
-      }).filter(p => p.text || Object.keys(p).length > 0)
-    }));
-    await addHistory(env, chatId, cleaned);
-    await trimHistory(env, chatId, 15);
-  }
+  try {
+    if (data.newContent && data.newContent.length > 0) {
+      const cleaned = data.newContent.map(c => ({
+        role: c.role,
+        parts: c.parts.map(p => {
+          if (p.inline_data) return { text: `[Media: ${p.inline_data.mime_type}]` };
+          const cp = {};
+          if (p.text !== undefined) cp.text = p.text;
+          if (Object.keys(cp).length > 0) return cp;
+          if (p.functionCall) return { text: `[FunctionCall: ${p.functionCall.name}]` };
+          if (p.functionResponse) return { text: `[FunctionResponse: ${p.functionResponse.name}]` };
+          return { text: '' };
+        }).filter(p => p.text || Object.keys(p).length > 0)
+      }));
+      await addHistory(env, chatId, cleaned);
+      await trimHistory(env, chatId, 15);
+    }
+    console.log(`[SpacesResult] Step1: addHistory done for ${chatId}`);
+  } catch (e) { console.error(`[SpacesResult] Step1 FAIL (addHistory):`, e.message); }
 
-  if (data.escalationTriggered) {
-    await sendTelegramMessage(
-      env.TELEGRAM_BOT_TOKEN, chatId,
-      "tugas ini butuh akses sistem yang lebih dalam. aku kerjakan di GitHub Actions ya...",
-    );
-  } else if (data.finalText) {
-    const richHtml = markdownToRichHtml(data.finalText);
-    await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml);
-  } else if (data.error) {
-    await sendTelegramMessage(
-      env.TELEGRAM_BOT_TOKEN, chatId,
-      `yah eror pas jalanin di server: ${data.error}. coba kirim lagi ya!`,
-    );
-  } else {
-    await sendTelegramMessage(
-      env.TELEGRAM_BOT_TOKEN, chatId,
-      "tugasnya udah aku jalanin ya! tp aku ga dapet respons teks penutup dr sistem. coba cek repo kamu deh, harusnya kodenya udh ke-update",
-    );
-  }
+  try {
+    if (data.escalationTriggered) {
+      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId,
+        "tugas ini butuh akses sistem yang lebih dalam. aku kerjakan di GitHub Actions ya...");
+    } else if (data.finalText) {
+      const richHtml = markdownToRichHtml(data.finalText);
+      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml);
+    } else if (data.error) {
+      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId,
+        `yah eror pas jalanin di server: ${data.error}. coba kirim lagi ya!`);
+    } else {
+      await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId,
+        "tugasnya udah aku jalanin ya! tp aku ga dapet respons teks penutup dr sistem. coba cek repo kamu deh, harusnya kodenya udh ke-update");
+    }
+    console.log(`[SpacesResult] Step2: sendTelegram done for ${chatId}`);
+  } catch (e) { console.error(`[SpacesResult] Step2 FAIL (sendTelegram):`, e.message); }
 
-  await removePendingSpace(env, chatId);
+  try {
+    await removePendingSpace(env, chatId);
+    console.log(`[SpacesResult] Step3: removePendingSpace done for ${chatId}`);
+  } catch (e) { console.error(`[SpacesResult] Step3 FAIL (removePendingSpace):`, e.message); }
 
-  let pid = progressMsgId || data.progressMsgId;
-  if (!pid) {
-    pid = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
-  }
-  if (pid) {
-    await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(pid)).catch(e =>
-      console.error(`[SpacesResult] Failed to delete progress msg ${pid} for ${chatId}:`, e.message)
-    );
-    await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
-  }
+  try {
+    let pid = progressMsgId || data.progressMsgId;
+    if (!pid) {
+      pid = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
+    }
+    if (pid) {
+      await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(pid)).catch(e =>
+        console.error(`[SpacesResult] Step4 deleteProgress FAIL:`, e.message)
+      );
+      await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
+    }
+    console.log(`[SpacesResult] Step4: deleteProgress done for ${chatId}`);
+  } catch (e) { console.error(`[SpacesResult] Step4 FAIL (deleteProgress):`, e.message); }
 
-  await releaseChatLock(env, chatId);
+  try {
+    await releaseChatLock(env, chatId);
+    console.log(`[SpacesResult] Step5: releaseChatLock done for ${chatId}`);
+  } catch (e) { console.error(`[SpacesResult] Step5 FAIL (releaseChatLock):`, e.message); }
 
   try {
     const { processMessage } = await import("../handlers/message.js");
