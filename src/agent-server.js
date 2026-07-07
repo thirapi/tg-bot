@@ -37,20 +37,21 @@ const activeChats = new Set();
 
 let lastWorkerUrl = null;
 let heartbeatInterval = null;
+const workerAgent = new https.Agent({ keepAlive: true, maxSockets: 1, keepAliveMsecs: 30000 });
+
 function startHeartbeat(workerUrl) {
   if (heartbeatInterval) return;
   console.log(`[Heartbeat] Starting keep-warm pings to ${workerUrl} every ${SPACES_HEARTBEAT_INTERVAL}ms`);
   heartbeatInterval = setInterval(async () => {
     const url = new URL(`${workerUrl}/api/health`);
-    const start = Date.now();
     try {
       await new Promise((resolve, reject) => {
         const req = https.request({
+          agent: workerAgent,
           hostname: url.hostname,
           path: url.pathname + url.search + `?_=${Date.now()}`,
           method: 'GET',
-          timeout: 5000,
-          keepAlive: false,
+          timeout: 10000,
         }, (res) => {
           res.resume();
           resolve();
@@ -199,10 +200,11 @@ const server = createServer(async (req, res) => {
         async function sendCallback(body) {
           const url = new URL(`${lastWorkerUrl}/api/spaces-callback`);
           const bodyStr = JSON.stringify(body);
-          for (let attempt = 1; attempt <= 4; attempt++) {
+          for (let attempt = 1; attempt <= 3; attempt++) {
             try {
               const result = await new Promise((resolve, reject) => {
                 const req = https.request({
+                  agent: workerAgent,
                   hostname: url.hostname,
                   path: url.pathname + url.search + `?_=${Date.now()}`,
                   method: 'POST',
@@ -211,8 +213,7 @@ const server = createServer(async (req, res) => {
                     'Authorization': 'Bearer kokoa-runner-secret',
                     'Content-Length': Buffer.byteLength(bodyStr),
                   },
-                  timeout: 12000,
-                  keepAlive: false,
+                  timeout: 15000,
                 }, (res) => {
                   let data = '';
                   res.on('data', c => data += c);
@@ -238,7 +239,7 @@ const server = createServer(async (req, res) => {
             } catch (e) {
               console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}${e.cause}`);
             }
-            if (attempt < 4) await new Promise(r => setTimeout(r, 3000));
+            if (attempt < 3) await new Promise(r => setTimeout(r, 3000));
           }
           console.error(`[Spaces] Callback failed for chat ${stringChatId}, short-poll will handle`);
         }
