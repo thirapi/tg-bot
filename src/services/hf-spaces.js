@@ -29,11 +29,6 @@ export async function processViaSpaces(env, chatId, userPrompt, mediaData, histo
 
   if (!response.ok) {
     if (response.status === 429) {
-      await sendTelegramMessage(
-        env.TELEGRAM_BOT_TOKEN,
-        chatId,
-        "Cocoa lagi mikirin jawaban/tugas sebelumnya nih, tunggu bentar ya! Jangan dicelup pesan baru dulu."
-      );
       return { status: "busy" };
     }
     const errBody = await response.text();

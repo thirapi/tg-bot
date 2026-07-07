@@ -31,9 +31,6 @@ setInterval(() => {
     if (now - val.ts > RESULT_TTL) resultsStore.delete(key);
   }
 }, 60000);
-// Track ongoing chat processes to avoid duplicate execution on the same workspace
-const activeChats = new Set();
-
 let lastWorkerUrl = null;
 
 function parseBody(req) {
@@ -152,20 +149,10 @@ const server = createServer(async (req, res) => {
       }
 
       const stringChatId = String(chatId);
-      if (activeChats.has(stringChatId)) {
-        console.log(`[Spaces] Returning BUSY for chat ${stringChatId} (activeChats.size=${activeChats.size})`);
-        res.writeHead(429, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'busy' }));
-        return;
-      }
 
       // Respond immediately to the Cloudflare Worker to prevent HTTP timeout
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'processing' }));
-
-      // Run the agent loop in the background
-      activeChats.add(stringChatId);
-      console.log(`[Spaces] activeChats ADD ${stringChatId} (size=${activeChats.size})`);
 
       // Initialize result as 'processing' so cron doesn't clean up prematurely
       resultsStore.set(stringChatId, { status: 'processing', ts: Date.now() });
@@ -325,9 +312,6 @@ const server = createServer(async (req, res) => {
             }
           }
 
-        } finally {
-          activeChats.delete(stringChatId);
-          console.log(`[Spaces] activeChats DELETE ${stringChatId} (size=${activeChats.size})`);
         }
       })();
 
