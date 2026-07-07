@@ -207,54 +207,54 @@ export async function handleAPI(request, env, ctx) {
         }
       }
 
-      // Handle Telegram final text response
-      if (finalText) {
-        const { sendTelegramMessage } = await import("../services/telegram.js");
-        const { markdownToRichHtml } = await import("../utils/formatter.js");
-        const richHtml = markdownToRichHtml(finalText);
-        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml).catch(e =>
-          console.error("Failed to send finalText on callback:", e)
-        );
-      }
-
-      // Handle Telegram error response
-      if (error) {
-        const { sendTelegramMessage } = await import("../services/telegram.js");
-        await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, error).catch(e =>
-          console.error("Failed to send error on callback:", e)
-        );
-      }
-
-      // Handle final cleanup (delete progress loading message & release lock)
+      // Handle final cleanup + response (mutex-guarded against short-poll)
       if (isFinal) {
         const mutexKey = `hdl:${chatId}`;
-        if (await env.CHAT_HISTORY.get(mutexKey)) {
-          console.log(`[Callback] Chat ${chatId} already handled, skipping callback finalize`);
-          return new Response("OK", { status: 200 });
-        }
-        await env.CHAT_HISTORY.put(mutexKey, "1", { expirationTtl: 120 });
+        const isAlreadyHandled = await env.CHAT_HISTORY.get(mutexKey);
 
-        // progressMsgId dari body callback (direct pass, no KV)
-        let progressMsgId = body.progressMsgId;
-        if (!progressMsgId) {
-          for (let i = 0; i < 5; i++) {
-            progressMsgId = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
-            if (progressMsgId) break;
-            await new Promise(r => setTimeout(r, 300));
+        if (!isAlreadyHandled) {
+          await env.CHAT_HISTORY.put(mutexKey, "1", { expirationTtl: 120 });
+
+          // Only the first handler sends response and deletes progress
+          if (finalText) {
+            const { sendTelegramMessage } = await import("../services/telegram.js");
+            const { markdownToRichHtml } = await import("../utils/formatter.js");
+            const richHtml = markdownToRichHtml(finalText);
+            await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, richHtml).catch(e =>
+              console.error("Failed to send finalText on callback:", e)
+            );
           }
-        }
-        if (progressMsgId) {
-          const { deleteTelegramMessage } = await import("../services/telegram.js");
-          await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(progressMsgId)).catch(e =>
-            console.error("Failed to delete progress message:", e)
-          );
-          await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
+
+          if (error) {
+            const { sendTelegramMessage } = await import("../services/telegram.js");
+            await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, error).catch(e =>
+              console.error("Failed to send error on callback:", e)
+            );
+          }
+
+          // progressMsgId dari body callback (direct pass, no KV)
+          let progressMsgId = body.progressMsgId;
+          if (!progressMsgId) {
+            for (let i = 0; i < 5; i++) {
+              progressMsgId = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
+              if (progressMsgId) break;
+              await new Promise(r => setTimeout(r, 300));
+            }
+          }
+          if (progressMsgId) {
+            const { deleteTelegramMessage } = await import("../services/telegram.js");
+            await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(progressMsgId)).catch(e =>
+              console.error("Failed to delete progress message:", e)
+            );
+            await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
+          }
+        } else {
+          console.log(`[Callback] Chat ${chatId} already handled by short-poll, skipping response`);
         }
 
+        // ALWAYS release lock and cleanup regardless of hdl
         console.log(`Releasing D1 lock for chat: ${chatId} (spaces-callback)`);
         await releaseChatLock(env, chatId);
-
-        // Tandai callback sudah selesai + hapus pending key biar cron tidak duplicate
         await env.CHAT_HISTORY.put(`callback_done:${chatId}`, "1", { expirationTtl: 300 }).catch(() => {});
         await removePendingSpace(env, chatId).catch(() => {});
 
