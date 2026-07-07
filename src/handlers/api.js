@@ -250,6 +250,7 @@ export async function handleAPI(request, env, ctx) {
 
       // Handle Telegram error response (edit progress message jadi error)
       if (error) {
+        const { sendTelegramMessage, editTelegramMessage } = await import("../services/telegram.js");
         let progressMsgId = body.progressMsgId;
         if (!progressMsgId) {
           for (let i = 0; i < 5; i++) {
@@ -259,14 +260,11 @@ export async function handleAPI(request, env, ctx) {
           }
         }
         if (progressMsgId) {
-          const { editTelegramMessage } = await import("../services/telegram.js");
           const errHtml = `<b>Error:</b> ${error}`;
           await editTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(progressMsgId), errHtml).catch(() => {
-            const { sendTelegramMessage } = await import("../services/telegram.js");
             sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, error).catch(() => {});
           });
         } else {
-          const { sendTelegramMessage } = await import("../services/telegram.js");
           await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, error).catch(e =>
             console.error("Failed to send error on callback:", e)
           );
