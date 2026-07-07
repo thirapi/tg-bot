@@ -177,21 +177,24 @@ DNS resolve berhasil (IP benar), TCP SYN dikirim tapi **diam-diam di-drop firewa
 
 Berdasarkan forum Hugging Face, ini adalah **intentional policy** — HF memblokir akses ke domain social media API dan beberapa IP range Cloudflare untuk mencegah abuse. Google API (Gemini) tetap berfungsi normal.
 
-### 5.4 Solusi: Polling dari Worker ke Spaces
+### 5.4 Solusi: Callback + Short-Poll + Cron
 
-Spaces tetap bisa **menerima koneksi masuk** (inbound) di port 7860. Solusinya: Spaces tidak perlu koneksi keluar sama sekali. Worker yang polling hasil dari Spaces.
+Spaces bisa menerima koneksi masuk (inbound) di port 7860. Setelah memproses, Spaces **mencoba callback** ke Worker. Jika gagal, Worker telah **short-poll** hasilnya selama `waitUntil`. Cron sebagai jaring pengaman akhir.
 
 ```
 Telegram → Worker → Spaces (POST /api/process)
                      ├── Respond {status: "processing"} immediately
                      ├── Proses AI + tools di background
-                     └── Simpan result di in-memory Map
+                     └── Callback ke Worker /api/spaces-callback (via persistent TLS)
 
-[Cron tiap 60 detik]
-Worker → Spaces (GET /api/result/{chatId})
-         ├── {status: "processing"} → tunggu cron berikutnya
-         ├── {status: "ready"} → kirim ke Telegram + simpan history + release lock
-         └── {status: "not_found"} → kirim error + cleanup (Spaces restart)
+Callback sukses:
+  Worker simpan history + kirim ke Telegram + release lock ✅
+
+Callback gagal (TLS timeout/disconnect):
+  [WaitUntil] Worker short-poll Spaces tiap 10s, max 30s → deliver
+
+Short-poll gagal (Spaces lambat):
+  [Cron tiap 60s] Worker polling Spaces → deliver + cleanup
 ```
 
 ### 5.5 Kenapa Polling?
@@ -221,6 +224,100 @@ Flow penanganan pesan progress:
 5. Kalau gagal (Spaces restart): cron kirim pesan error + hapus progress message
 
 Dengan polling, progress message **selalu dihapus** setelah response tiba — tidak seperti pendekatan callback yang rawan ghost message saat Spaces tidak bisa menghubungi Worker.
+
+### 5.8 Temuan: HF Spaces Membatasi Koneksi Outbound ke Cloudflare Workers
+
+#### 5.8.1 Gejala
+
+Callback dari Spaces ke Worker (`{space}.workers.dev/api/spaces-callback`) menunjukkan pola gagal yang konsisten:
+
+| Percobaan | Hasil |
+|---|---|
+| Callback pertama (segera setelah Worker→Spaces) | ✅ Sukses |
+| Callback kedua (30 detik kemudian) | ❌ `Client network socket disconnected before secure TLS connection was established` |
+| Semua heartbeat ping | ❌ `timeout` (socketevent) |
+
+DNS resolve berhasil, TCP connect sukses, tetapi **TLS handshake gagal** — koneksi di-RST oleh middleware jaringan setelah koneksi pertama.
+
+#### 5.8.2 Akar Masalah
+
+HF Spaces menggunakan **NAT gateway bersama** untuk semua container. Gateway ini:
+
+1. Mengizinkan **1 koneksi aktif** ke satu origin (`workers.dev`) dalam satu window waktu
+2. Koneksi kedua dan seterusnya di-drop diam-diam (RST saat TLS handshake)
+3. Tidak terkait dengan IPv6 (`--dns-result-order=ipv4first` sudah dipasang) atau DNS
+
+Dengan arsitektur **callback** (Spaces→Worker terjadi hanya saat ada pesan), jeda antar pesan bisa berjam-jam — koneksi pertama selalu berhasil (karena Worker baru saja menghubungi Spaces), tetapi koneksi berikutnya gagal.
+
+#### 5.8.3 Perbandingan dengan HuggingClaw / n8n
+
+**HuggingClaw** (OpenClaw + Cloudflare Proxy) menggunakan pendekatan berbeda:
+
+- Proxy (`cloudflare-proxy.js`) di-load via `NODE_OPTIONS="--require"`
+- **Memonkey-patch** `https.request`, `http.request`, `fetch`, dan `undici.dispatch`
+- Setiap request ke domain terblokir (api.telegram.org, dll.) dialihkan ke Cloudflare Worker proxy
+- **`delete newOptions.agent`** — hapus connection pool, paksa fresh connection tiap request
+- Berhasil karena **Telegram long-polling tiap 2 detik** → traffic konstan ke Worker → jalur selalu hangat
+
+HF Spaces NAT gateway mentolerir koneksi baru jika frekuensinya tinggi — HuggingClaw memanfaatkan ini dengan traffic ~30 request/menit.
+
+#### 5.8.4 Solusi: Persistent TLS Connection via keepAlive Agent
+
+Mengganti `keepAlive: false` (koneksi baru tiap request) dengan **shared `https.Agent`**:
+
+```javascript
+const workerAgent = new https.Agent({
+  keepAlive: true,      // socket tetap hidup setelah request selesai
+  maxSockets: 1,        // maksimal 1 koneksi ke origin
+  keepAliveMsecs: 30000 // kirim TCP keepalive tiap 30 detik
+});
+```
+
+**Semua** komunikasi Spaces→Worker (heartbeat + callback) memakai agent yang sama:
+
+```javascript
+const req = https.request({
+  agent: workerAgent, // ← reuse persistent connection
+  hostname: url.hostname,
+  // ...
+});
+```
+
+**Hasil:**
+
+| Sebelum (keepAlive: false) | Sesudah (keepAlive agent) |
+|---|---|
+| Callback 1: ✅ | Callback 1: ✅ |
+| Callback 2-4: ❌ gagal semua | Callback 2-4: ✅ semua (attempt 1) |
+| Heartbeat: ❌ timeout terus | Heartbeat: ✅ lancar |
+
+#### 5.8.5 Mekanisme Pendukung: Heartbeat
+
+Heartbeat (`GET /api/health` ke Worker) berjalan setiap 30 detik via agent yang sama untuk menjaga koneksi tetap hidup. Jika Cloudflare menutup koneksi karena idle, heartbeat otomatis mem-buat koneksi baru (agent `keepAlive` akan reconnect).
+
+```javascript
+heartbeatInterval = setInterval(async () => {
+  await new Promise((resolve, reject) => {
+    const req = https.request({
+      agent: workerAgent,
+      hostname: url.hostname,
+      path: '/api/health',
+      method: 'GET',
+      timeout: 10000,
+    }, /* ... */);
+  });
+}, SPACES_HEARTBEAT_INTERVAL); // 30000ms
+```
+
+#### 5.8.6 Kesimpulan untuk Arsitektur
+
+| Pendekatan | Cara Kerja | Cocok Untuk |
+|---|---|---|
+| HuggingClaw: fresh connection tiap request + frekuensi tinggi | Traffic konstan (polling 2s) jaga jalur tetap hangat | Bot yang perlu polling Telegram (inbound dari Spaces) |
+| n8n: persistent connection (inferred) | Satu koneksi dipakai ulang untuk semua komunikasi | Worker/webhook (outbound sporadis dari Spaces) |
+| **Kita: persistent agent + heartbeat** | Satu koneksi TCP/TLS + ping 30s untuk jaga NAT state | Webhook dengan callback sporadis |
+
+Kunci: **HF Spaces NAT gateway hanya tolerate 1 koneksi aktif ke workers.dev per window waktu**. Pilih strategi yang sesuai dengan pola traffic aplikasi.
 
 ---
 
