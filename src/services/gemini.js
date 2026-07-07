@@ -34,10 +34,8 @@ const personaReinforcement =
   const escalationHint =
     "PENTING — AUTO-ESKALASI: " +
     "Sistem akan auto-escalate kalo kamu panggil tool GitHub >3 kali atau iteration >= 4 " +
-    "tanpa menyelesaikan tugas. " +
-    (env.IS_SPACES
-      ? "Kalo tugasnya analisis atau coding langsung, kerjain pake tools yang ada. Auto-escalate ke GHA hanya kalo kamu buntu banget."
-      : "Kalo tugasnya ANALISIS REPO, jangan tunggu auto-escalate — kerjain langsung pake cloneRepo dkk. Auto-escalate cuma berguna kalo kamu buntu.");
+    "tanpa menyelesaikan tugas. Kalo tugasnya analisis atau coding langsung, kerjain pake tools yang ada. " +
+    "Auto-escalate hanya kalo kamu buntu banget.";
 
 const planningHint =
   "kalo ada perintah yang ribet (bikin fitur, analisis besar, dll), " +
