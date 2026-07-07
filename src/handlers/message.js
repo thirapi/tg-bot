@@ -68,6 +68,9 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
   let selfReflectionRun = false;
   let filesModified = false;
   const isSpaces = !!env.IS_SPACES;
+  let toolOnlyIterations = 0;
+  const doomCallHistory = [];
+  let pendingFinalText = null;
 
   // Throttle progress updates to avoid Telegram editMessageText rate limits
   let lastProgressTime = 0;
@@ -207,7 +210,7 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
           const keyShort = key.slice(-6);
           try {
             const cleanContents = currentContents.map(c => {
-              const { _selfReflection, ...rest } = c;
+              const { _selfReflection, _budgetWarning, ...rest } = c;
               return rest;
             });
             const fetchPromise = callAI(model, key, cleanContents, env, chatId);
@@ -291,6 +294,11 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
     currentContents.push(modelContent);
     const parts = modelContent.parts || [];
     const functionCalls = parts.filter((p) => p.functionCall);
+
+    const responseText = parts.map(p => p.text).filter(Boolean).join("\n").trim();
+    if (responseText) {
+      pendingFinalText = responseText;
+    }
 
     if (functionCalls.length > 0) {
       for (const call of functionCalls) {
@@ -387,6 +395,32 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
         parts: functionResponses,
       });
 
+      toolOnlyIterations++;
+      for (const fc of functionCalls) {
+        doomCallHistory.push(`${fc.functionCall.name}:${JSON.stringify(fc.functionCall.args)}`);
+      }
+      while (doomCallHistory.length > 12) doomCallHistory.shift();
+
+      const callFreq = {};
+      for (const key of doomCallHistory) callFreq[key] = (callFreq[key] || 0) + 1;
+      const maxFreq = Math.max(...Object.values(callFreq), 0);
+      if (maxFreq >= 4) {
+        currentContents.push({
+          role: "user",
+          parts: [{ text: `[SISTEM: Tool "${doomCallHistory[doomCallHistory.length-1].split(':')[0]}" dipanggil berulang dengan argumen serupa. Evaluasi apakah tool ini masih diperlukan. Jika sudah cukup, langsung berikan kesimpulan.]` }],
+          _budgetWarning: true
+        });
+      }
+
+      const remaining = MAX_AGENT_ITERATIONS - iteration;
+      if (toolOnlyIterations === 10 || toolOnlyIterations === 20 || toolOnlyIterations === 30 || toolOnlyIterations === 40) {
+        currentContents.push({
+          role: "user",
+          parts: [{ text: `[SISTEM: Sisa ${remaining} iterasi. Jika sudah cukup analisis, langsung berikan jawaban penutup.]` }],
+          _budgetWarning: true
+        });
+      }
+
       if (escalationTriggered) break;
       continue;
     }
@@ -412,6 +446,9 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
     if (functionCalls.length === 0) break;
   }
 
+  if (!finalText && pendingFinalText) {
+    finalText = pendingFinalText;
+  }
   return { finalText, escalationTriggered };
 }
 

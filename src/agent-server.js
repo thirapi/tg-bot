@@ -37,7 +37,7 @@ const activeChats = new Set();
 
 let lastWorkerUrl = null;
 let heartbeatInterval = null;
-const workerAgent = new https.Agent({ keepAlive: true, maxSockets: 1, keepAliveMsecs: 30000 });
+let workerAgent = new https.Agent({ keepAlive: true, maxSockets: 1, keepAliveMsecs: 30000 });
 
 function startHeartbeat(workerUrl) {
   if (heartbeatInterval) return;
@@ -62,7 +62,7 @@ function startHeartbeat(workerUrl) {
       });
     } catch (e) {
       console.warn(`[Heartbeat] Ping error: ${e.message}`);
-      workerAgent.destroy();
+      workerAgent = new https.Agent({ keepAlive: true, maxSockets: 1, keepAliveMsecs: 30000 });
     }
   }, SPACES_HEARTBEAT_INTERVAL);
 }
@@ -247,7 +247,7 @@ const server = createServer(async (req, res) => {
               console.warn(`[Spaces] Callback returned ${result.status} for chat ${stringChatId} (attempt ${attempt}): ${result.text.slice(0, 200)}`);
             } catch (e) {
               console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}${e.cause}`);
-              workerAgent.destroy();
+              workerAgent = new https.Agent({ keepAlive: true, maxSockets: 1, keepAliveMsecs: 30000 });
             }
             if (attempt < 3) await new Promise(r => setTimeout(r, 3000));
           }
@@ -300,7 +300,7 @@ const server = createServer(async (req, res) => {
           }
 
           const newContent = currentContents.slice(originalHistoryLength)
-            .filter(c => !c._selfReflection);
+            .filter(c => !c._selfReflection && !c._budgetWarning);
           console.log(`[Spaces] originalHistoryLength=${originalHistoryLength} curLen=${currentContents.length} newLen=${newContent.length} roles=${newContent.map(c=>c.role).join(',')}`);
           let finalText = null;
           if (!result.escalationTriggered) {
@@ -319,27 +319,10 @@ const server = createServer(async (req, res) => {
           console.log(`[Spaces] Result stored for chat ${stringChatId}`);
 
           if (lastWorkerUrl) {
-            const CHUNK_SIZE = 20;
-            const totalEntries = newContent.length;
-            if (totalEntries > 0) {
-              for (let i = 0; i < totalEntries; i += CHUNK_SIZE) {
-                const chunk = newContent.slice(i, i + CHUNK_SIZE);
-                const isLastChunk = i + CHUNK_SIZE >= totalEntries;
-                await sendCallback({
-                  chatId: stringChatId,
-                  newContents: chunk,
-                  finalText: isLastChunk ? finalText : undefined,
-                  isFinal: isLastChunk,
-                  maxHistory: 15,
-                  progressMsgId,
-                });
-              }
-            } else if (finalText) {
-              await sendCallback({
-                chatId: stringChatId, finalText,
-                isFinal: true, progressMsgId,
-              });
-            }
+            sendCallback({
+              chatId: stringChatId, newContents: newContent, finalText,
+              isFinal: true, maxHistory: 15, progressMsgId,
+            });
           }
 
         } catch (err) {
