@@ -52,7 +52,9 @@ export async function handleSpacesResult(env, chatId, data, progressMsgId) {
     pid = await env.CHAT_HISTORY.get(`progress_msg:${chatId}`);
   }
   if (pid) {
-    await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(pid)).catch(() => {});
+    await deleteTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, parseInt(pid)).catch(e =>
+      console.error(`[SpacesResult] Failed to delete progress msg ${pid} for ${chatId}:`, e.message)
+    );
     await env.CHAT_HISTORY.delete(`progress_msg:${chatId}`).catch(() => {});
   }
 
@@ -94,14 +96,14 @@ export async function pollSpacesResult(env, chatId, progressMsgId) {
   const maxTime = 30000;
   const startTime = Date.now();
   let attempt = 0;
-  let delay = 5000;
+  const delays = [0, 2000, 3000, 5000, 10000];
 
   while (Date.now() - startTime < maxTime) {
     attempt++;
 
-    if (attempt > 1) {
-      await new Promise(r => setTimeout(r, delay));
-      delay = Math.min(delay + 5000, 10000);
+    const idx = Math.min(attempt - 1, delays.length - 1);
+    if (delays[idx] > 0) {
+      await new Promise(r => setTimeout(r, delays[idx]));
     }
 
     try {
@@ -137,5 +139,8 @@ export async function pollSpacesResult(env, chatId, progressMsgId) {
   }
 
   console.log(`[ShortPoll] Timed out for ${chatId} after ${attempt} attempts, leaving for cron`);
+  const { releaseChatLock } = await import("../db/index.js");
+  await releaseChatLock(env, chatId);
+  console.log(`[ShortPoll] Released lock for ${chatId} after timeout`);
   return false;
 }
