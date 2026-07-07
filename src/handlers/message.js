@@ -206,7 +206,11 @@ export async function runAgentLoop(currentContents, env, chatId, userPrompt, pro
 
           const keyShort = key.slice(-6);
           try {
-            const fetchPromise = callAI(model, key, currentContents, env, chatId);
+            const cleanContents = currentContents.map(c => {
+              const { _selfReflection, ...rest } = c;
+              return rest;
+            });
+            const fetchPromise = callAI(model, key, cleanContents, env, chatId);
             const timeoutPromise = new Promise((_, reject) =>
               setTimeout(() => reject(new Error("TIMEOUT_TRIGGER: Request Timeout")), iterTimeout)
             );
