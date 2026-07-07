@@ -62,6 +62,7 @@ function startHeartbeat(workerUrl) {
       });
     } catch (e) {
       console.warn(`[Heartbeat] Ping error: ${e.message}`);
+      workerAgent.destroy();
     }
   }, SPACES_HEARTBEAT_INTERVAL);
 }
@@ -205,7 +206,7 @@ const server = createServer(async (req, res) => {
           proxyEnv.WORKER_URL = lastWorkerUrl;
         }
 
-        async function sendCallback(body) {
+          async function sendCallback(body) {
           const url = new URL(`${lastWorkerUrl}/api/spaces-callback`);
           const bodyStr = JSON.stringify(body);
           for (let attempt = 1; attempt <= 3; attempt++) {
@@ -221,7 +222,7 @@ const server = createServer(async (req, res) => {
                     'Authorization': 'Bearer kokoa-runner-secret',
                     'Content-Length': Buffer.byteLength(bodyStr),
                   },
-                  timeout: 15000,
+                  timeout: 25000,
                 }, (res) => {
                   let data = '';
                   res.on('data', c => data += c);
@@ -246,6 +247,7 @@ const server = createServer(async (req, res) => {
               console.warn(`[Spaces] Callback returned ${result.status} for chat ${stringChatId} (attempt ${attempt}): ${result.text.slice(0, 200)}`);
             } catch (e) {
               console.warn(`[Spaces] Callback attempt ${attempt} failed for chat ${stringChatId}: ${e.message}${e.cause}`);
+              workerAgent.destroy();
             }
             if (attempt < 3) await new Promise(r => setTimeout(r, 3000));
           }
