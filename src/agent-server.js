@@ -241,7 +241,7 @@ const server = createServer(async (req, res) => {
 
               if (result.ok) {
                 console.log(`[Spaces] Callback success for chat ${stringChatId} (attempt ${attempt})`);
-                resultsStore.delete(stringChatId);
+                if (body.isFinal) resultsStore.delete(stringChatId);
                 return;
               }
               console.warn(`[Spaces] Callback returned ${result.status} for chat ${stringChatId} (attempt ${attempt}): ${result.text.slice(0, 200)}`);
@@ -319,10 +319,27 @@ const server = createServer(async (req, res) => {
           console.log(`[Spaces] Result stored for chat ${stringChatId}`);
 
           if (lastWorkerUrl) {
-            sendCallback({
-              chatId: stringChatId, newContents: newContent, finalText,
-              isFinal: true, maxHistory: 15, progressMsgId,
-            });
+            const CHUNK_SIZE = 20;
+            const totalEntries = newContent.length;
+            if (totalEntries > 0) {
+              for (let i = 0; i < totalEntries; i += CHUNK_SIZE) {
+                const chunk = newContent.slice(i, i + CHUNK_SIZE);
+                const isLastChunk = i + CHUNK_SIZE >= totalEntries;
+                await sendCallback({
+                  chatId: stringChatId,
+                  newContents: chunk,
+                  finalText: isLastChunk ? finalText : undefined,
+                  isFinal: isLastChunk,
+                  maxHistory: 15,
+                  progressMsgId,
+                });
+              }
+            } else if (finalText) {
+              await sendCallback({
+                chatId: stringChatId, finalText,
+                isFinal: true, progressMsgId,
+              });
+            }
           }
 
         } catch (err) {
