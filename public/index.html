@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cocoa Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            max-width: 600px;
+            height: 80vh;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 12px 12px 0 0;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+        
+        .header p {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+        
+        .status {
+            font-size: 11px;
+            margin-top: 8px;
+            opacity: 0.8;
+        }
+        
+        .status.spaces {
+            color: #ffd700;
+        }
+        
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .message {
+            display: flex;
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .message.user {
+            justify-content: flex-end;
+        }
+        
+        .message.assistant {
+            justify-content: flex-start;
+        }
+        
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            word-wrap: break-word;
+            line-height: 1.4;
+            font-size: 14px;
+        }
+        
+        .message.user .message-content {
+            background: #667eea;
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        
+        .message.assistant .message-content {
+            background: #f0f0f0;
+            color: #333;
+            border-bottom-left-radius: 4px;
+        }
+        
+        .loading {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+        }
+        
+        .loading span {
+            width: 8px;
+            height: 8px;
+            background: #667eea;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite;
+        }
+        
+        .loading span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        
+        .loading span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        
+        @keyframes bounce {
+            0%, 80%, 100% {
+                opacity: 0.5;
+                transform: translateY(0);
+            }
+            40% {
+                opacity: 1;
+                transform: translateY(-10px);
+            }
+        }
+        
+        .input-area {
+            padding: 20px;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+        }
+        
+        .input-area input {
+            flex: 1;
+            border: 1px solid #ddd;
+            border-radius: 24px;
+            padding: 12px 16px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        
+        .input-area input:focus {
+            border-color: #667eea;
+        }
+        
+        .input-area button {
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            transition: background 0.3s;
+        }
+        
+        .input-area button:hover:not(:disabled) {
+            background: #764ba2;
+        }
+        
+        .input-area button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-size: 13px;
+        }
+        
+        .info {
+            background: #e8f4f8;
+            color: #0066cc;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-size: 12px;
+        }
+        
+        .messages::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+        
+        .messages::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Cocoa</h1>
+            <p>AI Assistant Chat</p>
+            <div class="status spaces" id="processingStatus"></div>
+        </div>
+        
+        <div class="messages" id="messages"></div>
+        
+        <div class="input-area">
+            <input 
+                type="text" 
+                id="input" 
+                placeholder="Type your message..."
+                autocomplete="off"
+            />
+            <button id="send" onclick="sendMessage()">➤</button>
+        </div>
+    </div>
+
+    <script>
+        const BASE_URL = window.location.origin;
+        let isProcessing = false;
+        let currentChatId = 'web_user';
+        let pollingAborted = false;
+
+        // Determine which endpoint to use based on env
+        async function getProcessingMode() {
+            try {
+                const response = await fetch(`${BASE_URL}/api/web-chat/mode`);
+                if (response.ok) {
+                    const data = await response.json();
+                    return data.mode; // 'worker' or 'spaces'
+                }
+            } catch (e) {
+                console.log('Mode endpoint not available, defaulting to worker');
+            }
+            return 'worker';
+        }
+
+        // Load chat history saat halaman dibuka
+        async function loadHistory() {
+            try {
+                const response = await fetch(`${BASE_URL}/api/web-chat/history`);
+                const data = await response.json();
+                
+                const messagesEl = document.getElementById('messages');
+                messagesEl.innerHTML = '';
+                
+                if (data.history && data.history.length > 0) {
+                    data.history.forEach(msg => {
+                        const text = msg.parts && msg.parts[0] ? msg.parts[0].text || '' : '';
+                        if (text) {
+                            addMessageToDOM(text, msg.role);
+                        }
+                    });
+                } else {
+                    addInfoMessage('👋 Halo! Aku Cocoa, AI assistantmu. Ada yang bisa aku bantu?');
+                }
+                
+                // Scroll ke bawah
+                messagesEl.scrollTop = messagesEl.scrollHeight;
+            } catch (err) {
+                console.error('Failed to load history:', err);
+                addInfoMessage('Failed to load chat history. Starting fresh...');
+            }
+        }
+
+        function addMessageToDOM(text, role = 'user') {
+            const messagesEl = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role === 'user' ? 'user' : 'assistant'}`;
+            messageDiv.innerHTML = `<div class="message-content">${escapeHtml(text)}</div>`;
+            messagesEl.appendChild(messageDiv);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function addLoadingToDOM() {
+            const messagesEl = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant';
+            messageDiv.id = 'loading-message';
+            messageDiv.innerHTML = `
+                <div class="message-content">
+                    <div class="loading">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+                </div>
+            `;
+            messagesEl.appendChild(messageDiv);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function removeLoadingFromDOM() {
+            const loading = document.getElementById('loading-message');
+            if (loading) loading.remove();
+        }
+
+        function addInfoMessage(text) {
+            const messagesEl = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant';
+            messageDiv.innerHTML = `<div class="message-content info">${escapeHtml(text)}</div>`;
+            messagesEl.appendChild(messageDiv);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('input');
+            const message = input.value.trim();
+
+            if (!message || isProcessing) return;
+
+            isProcessing = true;
+            pollingAborted = false;
+            input.disabled = true;
+            document.getElementById('send').disabled = true;
+
+            // Show user message immediately
+            addMessageToDOM(message, 'user');
+            input.value = '';
+
+            // Show loading indicator
+            addLoadingToDOM();
+            updateProcessingStatus('processing...');
+
+            try {
+                // Determine processing mode
+                const mode = await getProcessingMode();
+                console.log('Processing mode:', mode);
+
+                // Step 1: Send message
+                const sendResponse = await fetch(`${BASE_URL}/api/web-chat/send`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        message,
+                        mode // Pass mode to backend
+                    })
+                });
+
+                if (!sendResponse.ok) {
+                    const errData = await sendResponse.json().catch(() => ({}));
+                    throw new Error(errData.error || 'Failed to send message');
+                }
+
+                const sendData = await sendResponse.json();
+                const chatId = sendData.chatId || currentChatId;
+
+                // Step 2: Poll for result
+                let result = null;
+                let attempts = 0;
+                const maxAttempts = mode === 'spaces' ? 240 : 120; // Spaces: 4 minutes, Worker: 2 minutes
+                const pollInterval = mode === 'spaces' ? 1000 : 500; // Spaces: 1s, Worker: 500ms
+
+                updateProcessingStatus(`processing (${mode} mode)...`);
+
+                while (attempts < maxAttempts && !pollingAborted) {
+                    const resultResponse = await fetch(`${BASE_URL}/api/web-chat/result`);
+                    
+                    if (!resultResponse.ok) {
+                        throw new Error(`Result fetch failed: ${resultResponse.status}`);
+                    }
+
+                    const data = await resultResponse.json();
+
+                    if (data.status === 'ready') {
+                        result = data;
+                        break;
+                    }
+
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+
+                    if (data.status === 'processing') {
+                        updateProcessingStatus(`${mode} processing... (${attempts}s)`);
+                    }
+
+                    // Wait before polling again
+                    await new Promise(r => setTimeout(r, pollInterval));
+                    attempts++;
+                }
+
+                if (pollingAborted) {
+                    throw new Error('Request cancelled');
+                }
+
+                if (!result) {
+                    throw new Error(`Timeout - no response after ${attempts}s`);
+                }
+
+                // Remove loading and show result
+                removeLoadingFromDOM();
+                if (result.finalText) {
+                    addMessageToDOM(result.finalText, 'assistant');
+                } else if (result.error) {
+                    addMessageToDOM(`⚠️ Error: ${result.error}`, 'assistant');
+                } else {
+                    addMessageToDOM('No response received from AI', 'assistant');
+                }
+
+            } catch (err) {
+                removeLoadingFromDOM();
+                const errorMsg = err.message || 'Unknown error occurred';
+                addMessageToDOM(`❌ ${errorMsg}`, 'assistant');
+                console.error('Error:', err);
+            } finally {
+                isProcessing = false;
+                input.disabled = false;
+                document.getElementById('send').disabled = false;
+                input.focus();
+                updateProcessingStatus('');
+            }
+        }
+
+        function updateProcessingStatus(text) {
+            const statusEl = document.getElementById('processingStatus');
+            statusEl.textContent = text || '';
+            statusEl.className = text ? 'status spaces' : 'status';
+        }
+
+        // Send on Enter key
+        document.getElementById('input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !isProcessing) {
+                sendMessage();
+            }
+        });
+
+        // Allow cancellation with Escape key (for long operations)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && isProcessing) {
+                pollingAborted = true;
+                removeLoadingFromDOM();
+                isProcessing = false;
+                document.getElementById('input').disabled = false;
+                document.getElementById('send').disabled = false;
+                updateProcessingStatus('');
+                console.log('Request cancelled');
+            }
+        });
+
+        // Load history on page load
+        window.addEventListener('load', loadHistory);
+    </script>
+</body>
+</html>
