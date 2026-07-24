@@ -439,7 +439,7 @@ function getIndexHtml() {
         window.addEventListener('load', loadHistory);
     </script>
 </body>
-</html>\`;
+</html>`;
 
   return new Response(html, {
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
