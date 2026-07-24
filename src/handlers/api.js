@@ -6,14 +6,18 @@ const CALLBACK_TOKEN = "kokoa-runner-secret";
 
 const resultsStore = new Map();
 const RESULT_TTL = 60 * 60 * 1000; // 1 jam
+let cleanupStarted = false;
 
-// Cleanup expired results periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, val] of resultsStore) {
-    if (now - val.ts > RESULT_TTL) resultsStore.delete(key);
-  }
-}, 60000);
+function startCleanupInterval() {
+  if (cleanupStarted) return;
+  cleanupStarted = true;
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, val] of resultsStore) {
+      if (now - val.ts > RESULT_TTL) resultsStore.delete(key);
+    }
+  }, 60000);
+}
 
 async function sendTelegramMessage(botToken, chatId, text) {
   const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
@@ -29,6 +33,7 @@ async function sendTelegramMessage(botToken, chatId, text) {
 }
 
 export async function handleAPI(request, env, ctx) {
+  startCleanupInterval();
   const url = new URL(request.url);
   const path = url.pathname;
 
