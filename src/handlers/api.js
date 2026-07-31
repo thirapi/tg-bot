@@ -1,22 +1,22 @@
-import { updateTaskStatus, setMemory, deleteMemoriesByPrefix, getGHAContext, consumeGHAContext, getMemory, saveGHAContext, acquireChatLock, releaseChatLock, removePendingSpace, getHistory, addHistory, trimHistory, getAllMemories, getTasks } from "../db/index.js";
+import { updateTaskStatus, setMemory, deleteMemoriesByPrefix, getGHAContext, consumeGHAContext, getMemory, saveGHAContext, acquireChatLock, releaseChatLock, removePendingSpace, getHistory, addHistory, trimHistory, getAllMemories, getTasks, clearHistory } from "../db/index.js";
 import { MAX_HISTORY } from "../config.js";
 import { processWebChatViaSend } from "../services/web-chat.js";
 
 const CALLBACK_TOKEN = "kokoa-runner-secret";
 
-const resultsStore = new Map();
-const RESULT_TTL = 60 * 60 * 1000; // 1 jam
-let cleanupStarted = false;
+const RESULT_TTL = 60 * 60; // 1 jam (detik, untuk KV expiration)
 
-function startCleanupInterval() {
-  if (cleanupStarted) return;
-  cleanupStarted = true;
-  setInterval(() => {
-    const now = Date.now();
-    for (const [key, val] of resultsStore) {
-      if (now - val.ts > RESULT_TTL) resultsStore.delete(key);
-    }
-  }, 60000);
+function resultKey(chatId) {
+  return `web_chat_result:${chatId}`;
+}
+
+async function setResult(env, chatId, data) {
+  await env.CHAT_HISTORY.put(resultKey(chatId), JSON.stringify(data), { expirationTtl: RESULT_TTL });
+}
+
+async function getResult(env, chatId) {
+  const raw = await env.CHAT_HISTORY.get(resultKey(chatId));
+  return raw ? JSON.parse(raw) : null;
 }
 
 async function sendTelegramMessage(botToken, chatId, text) {
@@ -33,7 +33,6 @@ async function sendTelegramMessage(botToken, chatId, text) {
 }
 
 export async function handleAPI(request, env, ctx) {
-  startCleanupInterval();
   const url = new URL(request.url);
   const path = url.pathname;
 
@@ -52,30 +51,26 @@ export async function handleAPI(request, env, ctx) {
 
       const chatId = "web_user";
 
-      // Respond immediately
-      const responsePromise = new Promise(resolve => {
-        // Process async
-        (async () => {
-          try {
-            // Auto-detect mode and route
-            const mode = env.HF_SPACES_URL ? 'spaces' : 'worker';
-            console.log(`[Web Chat] Processing message via ${mode}`);
+      await setResult(env, chatId, { status: 'processing', ts: Date.now() });
 
-            const result = await processWebChatViaSend(env, message, mode);
-            resultsStore.set(chatId, { ...result, ts: Date.now() });
-            resolve();
-          } catch (err) {
-            console.error('[Web Chat] Processing error:', err);
-            resultsStore.set(chatId, {
-              status: 'complete',
-              finalText: null,
-              error: err.message,
-              ts: Date.now()
-            });
-            resolve();
-          }
-        })();
-      });
+      ctx.waitUntil((async () => {
+        try {
+          // Auto-detect mode and route
+          const mode = env.HF_SPACES_URL ? 'spaces' : 'worker';
+          console.log(`[Web Chat] Processing message via ${mode}`);
+
+          const result = await processWebChatViaSend(env, message, mode);
+          await setResult(env, chatId, { ...result, ts: Date.now() });
+        } catch (err) {
+          console.error('[Web Chat] Processing error:', err);
+          await setResult(env, chatId, {
+            status: 'complete',
+            finalText: null,
+            error: err.message,
+            ts: Date.now()
+          });
+        }
+      })());
 
       // Don't wait for processing, respond immediately
       return new Response(JSON.stringify({ status: 'processing', chatId }), {
@@ -83,6 +78,24 @@ export async function handleAPI(request, env, ctx) {
       });
     } catch (err) {
       console.error('[Web Chat] Send error:', err);
+      return new Response(JSON.stringify({ error: err.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }
+
+  // Web Chat: Reset history
+  if (path === "/api/web-chat/reset" && request.method === "POST") {
+    try {
+      const chatId = "web_user";
+      await clearHistory(env, chatId);
+      await env.CHAT_HISTORY.delete(resultKey(chatId));
+      return new Response(JSON.stringify({ status: "ok" }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (err) {
+      console.error('[Web Chat] Reset error:', err);
       return new Response(JSON.stringify({ error: err.message }), {
         status: 500,
         headers: { "Content-Type": "application/json" },
@@ -111,7 +124,7 @@ export async function handleAPI(request, env, ctx) {
   if (path === "/api/web-chat/result" && request.method === "GET") {
     try {
       const chatId = "web_user";
-      const data = resultsStore.get(chatId);
+      const data = await getResult(env, chatId);
 
       if (!data) {
         return new Response(JSON.stringify({ status: "not_found" }), {
