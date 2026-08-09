@@ -546,6 +546,143 @@ export const githubTools = [
   },
 ];
 
+export const trelloTools = [
+  {
+    functionDeclarations: [
+      {
+        name: "getTrelloBoard",
+        description: "Mengambil detail board Trello, daftar kolom (lists), dan kartu yang ada di dalamnya.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            boardId: { type: "STRING", description: "ID Board Trello (opsional jika sudah ada di memori/env)." },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "getTrelloLists",
+        description: "Mengambil daftar kolom (lists) dalam sebuah Board Trello.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            boardId: { type: "STRING", description: "ID Board Trello." },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "createTrelloList",
+        description: "Membuat kolom (list) baru dalam Board Trello.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            boardId: { type: "STRING", description: "ID Board Trello." },
+            name: { type: "STRING", description: "Nama kolom baru (contoh: 'QA Review', 'In Progress')." },
+          },
+          required: ["name"],
+        },
+      },
+      {
+        name: "createTrelloCard",
+        description: "Membuat kartu Trello baru di board/kolom tertentu. Otomatis mencari/membuat kolom jika listName diberikan, dan membuat checklist sub-tugas jika subtasks diberikan.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            boardId: { type: "STRING", description: "ID Board Trello." },
+            listId: { type: "STRING", description: "ID kolom/list Trello tujuan." },
+            listName: { type: "STRING", description: "Nama kolom/list Trello tujuan (contoh: 'To Do', 'In Progress', 'Backlog')." },
+            name: { type: "STRING", description: "Judul kartu Trello." },
+            desc: { type: "STRING", description: "Deskripsi rinci kartu, analisis kompleksitas, atau rincian masalah." },
+            subtasks: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "Daftar sub-tugas yang akan dijadikan checklist di dalam kartu.",
+            },
+            due: { type: "STRING", description: "Tanggal/jam tenggat (format ISO 8601)." },
+            labels: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "Daftar ID label." },
+          },
+          required: ["name"],
+        },
+      },
+      {
+        name: "addTrelloChecklist",
+        description: "Menambahkan checklist atau sub-tugas ke dalam kartu Trello yang sudah ada.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            cardId: { type: "STRING", description: "ID kartu Trello." },
+            title: { type: "STRING", description: "Judul checklist (default: 'Sub-tugas')." },
+            items: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "Daftar item sub-tugas.",
+            },
+          },
+          required: ["cardId", "items"],
+        },
+      },
+      {
+        name: "addTrelloAttachment",
+        description: "Melampirkan URL atau gambar referensi ke kartu Trello.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            cardId: { type: "STRING", description: "ID kartu Trello." },
+            url: { type: "STRING", description: "URL gambar atau tautan referensi." },
+            name: { type: "STRING", description: "Nama lampiran." },
+          },
+          required: ["cardId", "url"],
+        },
+      },
+      {
+        name: "moveTrelloCard",
+        description: "Memindahkan kartu Trello ke kolom/list lain.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            cardId: { type: "STRING", description: "ID kartu Trello." },
+            targetListId: { type: "STRING", description: "ID kolom tujuan." },
+            targetListName: { type: "STRING", description: "Nama kolom tujuan (misal: 'In Progress', 'Done')." },
+            boardId: { type: "STRING", description: "ID Board Trello." },
+          },
+          required: ["cardId"],
+        },
+      },
+      {
+        name: "updateTrelloCard",
+        description: "Memperbarui detail kartu Trello (nama, deskripsi, due date, status).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            cardId: { type: "STRING", description: "ID kartu Trello." },
+            name: { type: "STRING", description: "Judul baru." },
+            desc: { type: "STRING", description: "Deskripsi baru." },
+            due: { type: "STRING", description: "Due date baru." },
+            closed: { type: "BOOLEAN", description: "Set true untuk mengarsip/menutup kartu." },
+          },
+          required: ["cardId"],
+        },
+      },
+      {
+        name: "createTrelloBoard",
+        description: "Membuat Board Trello baru.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nama board baru (contoh: 'Project Task')." },
+            desc: { type: "STRING", description: "Deskripsi board." },
+          },
+          required: ["name"],
+        },
+      },
+    ],
+  },
+];
+
 export const spacesTools = [
   {
     functionDeclarations: [
@@ -612,3 +749,4 @@ export const spacesTools = [
     ],
   },
 ];
+

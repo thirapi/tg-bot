@@ -2,6 +2,17 @@ import { callGitHubAPI } from "../services/github.js";
 import { bufferToBase64 } from "../utils/array.js";
 import { webSearch, webFetch } from "../services/search.js";
 import {
+  getTrelloBoard,
+  getTrelloLists,
+  createTrelloList,
+  createTrelloCard,
+  addTrelloChecklist,
+  addTrelloAttachment,
+  moveTrelloCard,
+  updateTrelloCard,
+  createTrelloBoard,
+} from "../services/trello.js";
+import {
   createTasks,
   getTasks,
   updateTaskStatus,
@@ -303,6 +314,33 @@ export async function executeTool(name, args, env, chatId) {
     case "deleteReminder": {
       await deleteReminder(env, chatId, args.reminder_id);
       return { message: `Pengingat #${args.reminder_id} udah dihapus.` };
+    }
+    case "getTrelloBoard": {
+      return await getTrelloBoard(env, chatId, args.boardId);
+    }
+    case "getTrelloLists": {
+      return await getTrelloLists(env, chatId, args.boardId);
+    }
+    case "createTrelloList": {
+      return await createTrelloList(env, chatId, args.boardId, args.name);
+    }
+    case "createTrelloCard": {
+      return await createTrelloCard(env, chatId, args);
+    }
+    case "addTrelloChecklist": {
+      return await addTrelloChecklist(env, chatId, args.cardId, args.title, args.items);
+    }
+    case "addTrelloAttachment": {
+      return await addTrelloAttachment(env, chatId, args.cardId, args.url, args.name);
+    }
+    case "moveTrelloCard": {
+      return await moveTrelloCard(env, chatId, args.cardId, args);
+    }
+    case "updateTrelloCard": {
+      return await updateTrelloCard(env, chatId, args.cardId, args);
+    }
+    case "createTrelloBoard": {
+      return await createTrelloBoard(env, chatId, args.name, args.desc);
     }
     default:
       throw new Error(`Tool "${name}" tidak dikenal atau belum diimplementasikan.`);

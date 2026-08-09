@@ -1,10 +1,16 @@
-import { githubTools, spacesTools } from "../tools/definitions.js";
+import { githubTools, spacesTools, trelloTools } from "../tools/definitions.js";
 import { getRecentMemories } from "../db/index.js";
 
 const personaReinforcement =
   "inget ya, kamu cocoa. jangan pernah pake emoji di chat. " +
   "kalo obrolan santai, respon santai aja. kalo lg analisis teknis, respon detail & struktural. " +
   "kalo ada error, tetap informatif — kasih tau konteksnya secara simpel tp jelas.";
+
+const trelloHint =
+  "kalo pengguna ngirim laporan masalah/fitur untuk Trello atau minta buat kartu Kanban, " +
+  "analisis kompleksitasnya, pecah sub-tugas, buat estimasi effort (S/M/L) & durasi pengerjaan, " +
+  "lalu buatkan kartu di Trello via `createTrelloCard`. Kalo kredensial Trello belum tersimpan, " +
+  "instruksikan pengguna untuk menyimpan via `remember` (key: TRELLO_API_KEY, TRELLO_TOKEN, TRELLO_BOARD_ID).";
 
   const webToolHint =
     "oh iya, kamu bisa cari info di internet pake `webSearch` kalo ada yang gatau, " +
@@ -103,7 +109,7 @@ export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
     "- kamu jalan di dedicated server, waktu eksekusi sampe 4 menit\n" +
     "- kamu bisa clone repo, baca file, grep, jalanin shell command langsung\n" +
     "- kamu punya akses FULL GitHub API (createOrUpdateFile, createPullRequest, createBranch, dll)\n" +
-    "- kamu bisa akses web search dan memory\n" +
+    "- kamu bisa akses web search, Trello API, dan memory\n" +
     "- GHA (`triggerDeveloperWorkflow`) khusus untuk yg butuh >4 menit atau environment khusus\n" +
     "- kalo tugasnya simple — kerjain langsung pake tool yang ada";
 
@@ -115,6 +121,7 @@ export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
     env.IS_SPACES ? workspaceContext : null,
     limitsContext,
     webToolHint,
+    trelloHint,
     env.IS_SPACES ? spacesHint : null,
     contextHint,
     planningHint,
@@ -128,7 +135,9 @@ export async function fetchGeminiGenerate(model, key, contents, env, chatId) {
   ]
     .filter(Boolean)
     .join("\n\n");
-  const tools = env.IS_SPACES ? [...githubTools, ...spacesTools] : githubTools;
+  const tools = env.IS_SPACES
+    ? [...githubTools, ...spacesTools, ...trelloTools]
+    : [...githubTools, ...trelloTools];
 
   const payload = {
     contents: sanitizedContents,

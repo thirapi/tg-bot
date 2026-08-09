@@ -1,4 +1,4 @@
-import { githubTools, spacesTools } from "../tools/definitions.js";
+import { githubTools, spacesTools, trelloTools } from "../tools/definitions.js";
 import { getRecentMemories } from "../db/index.js";
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
@@ -35,7 +35,7 @@ function buildTools(source) {
   return tools;
 }
 
-const openAITools = buildTools(githubTools);
+const openAITools = [...buildTools(githubTools), ...buildTools(trelloTools)];
 const spacesAITools = buildTools(spacesTools);
 
 const ESSENTIAL_TOOLS = [
@@ -44,6 +44,8 @@ const ESSENTIAL_TOOLS = [
   'createTaskPlan', 'getTaskPlan', 'updateTaskStatus', 'clearTaskPlan',
   'webSearch', 'webFetch',
   'triggerDeveloperWorkflow', 'checkWorkflowStatus',
+  'createTrelloCard', 'getTrelloBoard', 'getTrelloLists', 'createTrelloList',
+  'addTrelloChecklist', 'addTrelloAttachment', 'moveTrelloCard', 'updateTrelloCard', 'createTrelloBoard',
 ];
 
 const GITHUB_TOOLS = [
@@ -195,6 +197,12 @@ async function buildSystemMessage(env, chatId) {
     "hanya pesan TERAKHIR dari user yang perlu kamu respon/tindaklanjuti. " +
     "jangan mengulang atau mengerjakan ulang instruksi dari percakapan lama.";
 
+  const trelloHint =
+    "kalo pengguna ngirim laporan masalah/fitur untuk Trello atau minta buat kartu Kanban, " +
+    "analisis kompleksitasnya, pecah sub-tugas, buat estimasi effort (S/M/L) & durasi pengerjaan, " +
+    "lalu buatkan kartu di Trello via `createTrelloCard`. Kalo kredensial Trello belum tersimpan, " +
+    "instruksikan pengguna untuk menyimpan via `remember` (key: TRELLO_API_KEY, TRELLO_TOKEN, TRELLO_BOARD_ID).";
+
   const finalSystemInstruction = [
     systemPersona,
     systemInstruction,
@@ -203,6 +211,7 @@ async function buildSystemMessage(env, chatId) {
     env.IS_SPACES ? workspaceContext : null,
     limitsContext,
     webToolHint,
+    trelloHint,
     env.IS_SPACES ? spacesHint : null,
     contextHint,
     planningHint,
